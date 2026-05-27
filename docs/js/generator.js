@@ -119,9 +119,22 @@ class LoopCourseGenerator {
       cells[startR][startC] = 1;
       
       // Fill ratio: determine how many cells will be "Inside" the loop
-      // Increased to 72% - 87% to ensure the loop fills the entire board (no floating center)
+      // Dynamically adjust fill ratio based on grid size to prevent border-sticking on small grids
       const totalCells = this.rows * this.cols;
-      const targetInsideCount = Math.floor(totalCells * (0.72 + Math.random() * 0.15));
+      let fillRatioMin = 0.72;
+      let fillRatioMax = 0.87;
+      if (totalCells <= 36) {
+        fillRatioMin = 0.40;
+        fillRatioMax = 0.52;
+      } else if (totalCells <= 64) {
+        fillRatioMin = 0.48;
+        fillRatioMax = 0.60;
+      } else if (totalCells <= 144) {
+        fillRatioMin = 0.58;
+        fillRatioMax = 0.70;
+      }
+      
+      const targetInsideCount = Math.floor(totalCells * (fillRatioMin + Math.random() * (fillRatioMax - fillRatioMin)));
       let insideCount = 1;
       
       let failedAttempts = 0;
@@ -129,8 +142,9 @@ class LoopCourseGenerator {
       const dr = [-1, 1, 0, 0];
       const dc = [0, 0, -1, 1];
       
-      // Grow while insideCount is below target OR there are still 3x3 blocks of outside (empty) space to break
-      while ((insideCount < targetInsideCount || count3x3OutsideBlocks(cells) > 0) && failedAttempts < maxFailedAttempts) {
+      // Grow while insideCount is below target OR (for large boards) there are still 3x3 blocks of outside (empty) space to break
+      const shouldBreakOutside = (totalCells >= 100);
+      while ((insideCount < targetInsideCount || (shouldBreakOutside && count3x3OutsideBlocks(cells) > 0)) && failedAttempts < maxFailedAttempts) {
         const candidates = [];
         
         // Calculate center of mass of current Inside cells
@@ -207,7 +221,8 @@ class LoopCourseGenerator {
                 const distScore = 1.0 + dist * 0.15;
                 
                 const isBorder = (r === 0 || r === this.rows - 1 || c === 0 || c === this.cols - 1);
-                const borderPenalty = 1.0; // Removed border penalty so loop reaches corners/edges!
+                // Discourage border sticking on small grids by applying a penalty
+                const borderPenalty = (totalCells <= 64 && isBorder) ? 0.35 : 1.0;
                 
                 let bendMultiplier = 1.0;
                 if (insideNeighbors === 1 && firstInsideNeighbor) {
