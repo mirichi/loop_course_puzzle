@@ -594,6 +594,25 @@ select:focus {
   }
 }
 
+/* Red Neon Error Hint Animation */
+.edge-group.error-pulse .grid-line {
+  stroke: var(--neon-red) !important;
+  stroke-width: 6.5px !important;
+  filter: drop-shadow(0 0 10px var(--neon-red)) !important;
+  animation: error-glow-pulse 0.8s ease-in-out 2 alternate !important;
+}
+
+@keyframes error-glow-pulse {
+  0% {
+    filter: drop-shadow(0 0 4px var(--neon-red));
+    stroke-width: 5px;
+  }
+  100% {
+    filter: drop-shadow(0 0 15px var(--neon-red)) drop-shadow(0 0 25px rgba(239, 68, 68, 0.4));
+    stroke-width: 8px;
+  }
+}
+
 /* Mobile Screens (Under 480px) Optimization */
 @media (max-width: 480px) {
   .app-container {

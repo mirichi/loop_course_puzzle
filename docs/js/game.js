@@ -682,46 +682,67 @@ class LoopCourseGame {
   giveHint() {
     if (this.gameCompleted || this.isPaused) return;
 
-    // Find all edges where the current state does not match the correct solution state
-    const mismatches = [];
+    // 1. First, check if there are any incorrectly placed edges (mistakes)
+    const mistakes = [];
     for (let i = 0; i < this.numEdges; i++) {
-      if (this.edgeStates[i] !== this.solution[i]) {
-        mismatches.push(i);
+      if (this.edgeStates[i] !== 0 && this.edgeStates[i] !== this.solution[i]) {
+        mistakes.push(i);
       }
     }
 
-    if (mismatches.length === 0) {
-      this.statusTextEl.textContent = '💡 すべての線がすでに正しい状態です！素晴らしい！';
+    // 2. If there are mistakes, highlight all of them in red and return early without changing the board
+    if (mistakes.length > 0) {
+      mistakes.forEach(idx => {
+        const edgeGroup = this.svg.querySelector(`.edge-${idx}`);
+        if (edgeGroup) {
+          edgeGroup.classList.add('error-pulse');
+          setTimeout(() => {
+            edgeGroup.classList.remove('error-pulse');
+          }, 1600);
+        }
+      });
+      this.statusTextEl.textContent = `❌ 間違いが ${mistakes.length} 箇所あります（赤く点滅している線）。まずはこれらを修正してください。`;
       return;
     }
 
-    // Pick a random mismatched edge to reveal
-    const hintIdx = mismatches[Math.floor(Math.random() * mismatches.length)];
-    const oldState = this.edgeStates[hintIdx];
-    const newState = this.solution[hintIdx];
-
-    this.edgeStates[hintIdx] = newState;
-    this.updateEdgeUI(hintIdx);
-    this.updateCluesHighlight();
-
-    // Push to Undo stack as a single change step
-    this.undoStack.push([{ edgeIdx: hintIdx, oldState, newState }]);
-    this.redoStack = [];
-    this.updateUndoRedoButtons();
-
-    // Trigger golden pulsing glow animation on the hinted edge
-    const edgeGroup = this.svg.querySelector(`.edge-${hintIdx}`);
-    if (edgeGroup) {
-      edgeGroup.classList.add('hint-pulse');
-      setTimeout(() => {
-        edgeGroup.classList.remove('hint-pulse');
-      }, 1600); // match animation length (2 cycles of 0.8s)
+    // 3. If there are no mistakes, look for undecided edges that should contain a LINE (solution === 1)
+    const correctUndecidedLines = [];
+    for (let i = 0; i < this.numEdges; i++) {
+      if (this.edgeStates[i] === 0 && this.solution[i] === 1) {
+        correctUndecidedLines.push(i);
+      }
     }
 
-    this.statusTextEl.textContent = '💡 ヒント適用！正しい辺を1手確定しました。';
-    
-    // Check if the hint completed the game
-    this.checkWinCondition();
+    // 4. If we found an undecided correct line, reveal it as a solid line and pulse it in gold
+    if (correctUndecidedLines.length > 0) {
+      const hintIdx = correctUndecidedLines[Math.floor(Math.random() * correctUndecidedLines.length)];
+      const oldState = 0;
+      const newState = 1;
+
+      this.edgeStates[hintIdx] = newState;
+      this.updateEdgeUI(hintIdx);
+      this.updateCluesHighlight();
+
+      // Push to Undo stack as a single change step
+      this.undoStack.push([{ edgeIdx: hintIdx, oldState, newState }]);
+      this.redoStack = [];
+      this.updateUndoRedoButtons();
+
+      // Trigger golden pulsing glow animation on the hinted edge
+      const edgeGroup = this.svg.querySelector(`.edge-${hintIdx}`);
+      if (edgeGroup) {
+        edgeGroup.classList.add('hint-pulse');
+        setTimeout(() => {
+          edgeGroup.classList.remove('hint-pulse');
+        }, 1600);
+      }
+
+      this.statusTextEl.textContent = '💡 ヒント適用！正しい線を1手確定しました。';
+      this.checkWinCondition();
+    } else {
+      // 5. If there are no mistakes and no correct lines left to draw (the loop is fully complete)
+      this.statusTextEl.textContent = '💡 すべての正しい線がすでに引かれています！クリア状態です！';
+    }
   }
 
   updateUndoRedoButtons() {
