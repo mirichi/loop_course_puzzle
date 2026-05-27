@@ -472,6 +472,40 @@ class LoopCourseGame {
   handleEdgeDragEnter(edgeIdx, clientX = null, clientY = null) {
     if (!this.isDragging || this.gameCompleted || this.isPaused) return;
     
+    // Prevent creating a branch (degree > 2) at endpoints during drag-drawing.
+    // If the user wants to draw a branch/T-junction, they must explicitly click the edge.
+    if (this.dragState === 1) {
+      let r1, c1, r2, c2;
+      const isVertical = edgeIdx >= this.numH;
+      if (!isVertical) {
+        r1 = Math.floor(edgeIdx / this.cols);
+        c1 = edgeIdx % this.cols;
+        r2 = r1;
+        c2 = c1 + 1;
+      } else {
+        const vIdx = edgeIdx - this.numH;
+        r1 = Math.floor(vIdx / (this.cols + 1));
+        c1 = vIdx % (this.cols + 1);
+        r2 = r1 + 1;
+        c2 = c1;
+      }
+      
+      if (this.countDrawnLinesForDot(r1, c1, edgeIdx) >= 2 || this.countDrawnLinesForDot(r2, c2, edgeIdx) >= 2) {
+        return; // Block drawing this edge via drag as it would create a branch!
+      }
+
+      // Prevent drawing an edge if it would violate adjacent cell clues (lines count >= clue) during drag-drawing.
+      const adjCells = this.getAdjacentCellsForEdge(edgeIdx);
+      for (const cell of adjCells) {
+        const clue = this.clues[cell.r][cell.c];
+        if (clue !== null) {
+          if (this.countDrawnLinesForCell(cell.r, cell.c, edgeIdx) >= clue) {
+            return; // Block drawing this edge via drag as it would violate the cell's clue constraint!
+          }
+        }
+      }
+    }
+    
     // Directional Lock to prevent accidental perpendicular line drawing
     // ONLY apply when drawing solid lines (dragState === 1). 
     // Allow players to drag freely when placing crosses (-1) or erasing (0).
@@ -592,6 +626,81 @@ class LoopCourseGame {
       const y2 = y1 + this.spacing;
       return { x1, y1, x2, y2, isVertical };
     }
+  }
+
+  getHEdgeIndex(r, c) {
+    if (r < 0 || r > this.rows || c < 0 || c >= this.cols) return -1;
+    return r * this.cols + c;
+  }
+
+  getVEdgeIndex(r, c) {
+    if (r < 0 || r >= this.rows || c < 0 || c > this.cols) return -1;
+    return this.numH + r * (this.cols + 1) + c;
+  }
+
+  getDotEdges(r, c) {
+    const edges = [];
+    const up = this.getVEdgeIndex(r - 1, c);
+    const down = this.getVEdgeIndex(r, c);
+    const left = this.getHEdgeIndex(r, c - 1);
+    const right = this.getHEdgeIndex(r, c);
+    
+    if (up !== -1) edges.push(up);
+    if (down !== -1) edges.push(down);
+    if (left !== -1) edges.push(left);
+    if (right !== -1) edges.push(right);
+    return edges;
+  }
+
+  countDrawnLinesForDot(r, c, excludeEdgeIdx) {
+    const edges = this.getDotEdges(r, c);
+    let count = 0;
+    for (const idx of edges) {
+      if (idx !== excludeEdgeIdx && this.edgeStates[idx] === 1) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  getCellEdges(r, c) {
+    return [
+      this.getHEdgeIndex(r, c),     // Top
+      this.getVEdgeIndex(r, c + 1), // Right
+      this.getHEdgeIndex(r + 1, c), // Bottom
+      this.getVEdgeIndex(r, c)      // Left
+    ];
+  }
+
+  getAdjacentCellsForEdge(edgeIdx) {
+    const cells = [];
+    const isVertical = edgeIdx >= this.numH;
+    if (!isVertical) {
+      // Horizontal edge
+      const r = Math.floor(edgeIdx / this.cols);
+      const c = edgeIdx % this.cols;
+      if (r > 0) cells.push({ r: r - 1, c }); // Top cell
+      if (r < this.rows) cells.push({ r, c }); // Bottom cell
+    } else {
+      // Vertical edge
+      const vIdx = edgeIdx - this.numH;
+      const r = Math.floor(vIdx / (this.cols + 1));
+      const c = vIdx % (this.cols + 1);
+      if (c > 0) cells.push({ r, c: c - 1 }); // Left cell
+      if (c < this.cols) cells.push({ r, c }); // Right cell
+    }
+    return cells;
+  }
+
+  countDrawnLinesForCell(r, c, excludeEdgeIdx) {
+    const cellEdges = this.getCellEdges(r, c);
+    let count = 0;
+    for (const idx of cellEdges) {
+      if (idx !== excludeEdgeIdx && this.edgeStates[idx] === 1) {
+        count++;
+      }
+    }
+    return count;
   }
 
   applyEdgeStateChange(edgeIdx, newState) {
