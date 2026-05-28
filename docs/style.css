@@ -273,22 +273,20 @@ select:focus {
   cursor: default;
   max-width: 100%;
   height: auto;
+  will-change: transform; /* Hardware accelerate scaling/zooming on mobile GPU */
 }
 
 /* Grid Dots */
 .grid-dot {
   fill: #4b5563;
-  transition: var(--transition-smooth);
 }
 
 /* Grid Cell Clue Groups */
 .cell-clue-group {
-  transition: var(--transition-smooth);
 }
 
 .cell-bg {
   fill: transparent;
-  transition: var(--transition-smooth);
 }
 
 .clue-text {
@@ -321,7 +319,6 @@ select:focus {
   stroke: #1f2937;
   stroke-width: 3.5;
   stroke-linecap: round;
-  transition: stroke 0.18s ease, stroke-width 0.18s ease, filter 0.18s ease;
   pointer-events: none;
 }
 
@@ -351,7 +348,6 @@ select:focus {
   opacity: 0;
   transform: scale(0.6);
   transform-origin: center;
-  transition: var(--transition-smooth);
   pointer-events: none;
 }
 

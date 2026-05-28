@@ -30,26 +30,25 @@ class LoopCourseSolver {
 
   // Returns array of 4 edge indices around cell (r, c)
   getCellEdges(r, c) {
-    return [
-      this.getHEdgeIndex(r, c),     // Top
-      this.getVEdgeIndex(r, c + 1), // Right
-      this.getHEdgeIndex(r + 1, c), // Bottom
-      this.getVEdgeIndex(r, c)      // Left
-    ];
+    // Inlined for performance to avoid function overhead and bounds checks
+    const top = r * this.cols + c;
+    const right = this.numH + r * (this.cols + 1) + (c + 1);
+    const bottom = (r + 1) * this.cols + c;
+    const left = this.numH + r * (this.cols + 1) + c;
+    return [top, right, bottom, left];
   }
 
   // Returns array of up to 4 edge indices connected to dot (r, c)
   getDotEdges(r, c) {
     const edges = [];
-    const up = this.getVEdgeIndex(r - 1, c);
-    const down = this.getVEdgeIndex(r, c);
-    const left = this.getHEdgeIndex(r, c - 1);
-    const right = this.getHEdgeIndex(r, c);
-    
-    if (up !== -1) edges.push(up);
-    if (down !== -1) edges.push(down);
-    if (left !== -1) edges.push(left);
-    if (right !== -1) edges.push(right);
+    // Up
+    if (r > 0) edges.push(this.numH + (r - 1) * (this.cols + 1) + c);
+    // Down
+    if (r < this.rows) edges.push(this.numH + r * (this.cols + 1) + c);
+    // Left
+    if (c > 0) edges.push(r * this.cols + (c - 1));
+    // Right
+    if (c < this.cols) edges.push(r * this.cols + c);
     return edges;
   }
 
@@ -145,12 +144,13 @@ class LoopCourseSolver {
         }
       }
       
-      // 3. Early dead-end and small-loop prevention
-      // If we close a loop, it must contain ALL drawn edges.
-      // If there are multiple separate drawn paths, they shouldn't close prematurely.
-      if (this.preventsPrematureLoops() === false) {
-        return false;
-      }
+    }
+    
+    // 3. Early dead-end and small-loop prevention
+    // Run premature loop check ONCE after local cell and dot deductions are fully exhausted.
+    // If a premature loop is closed early, it is a contradiction.
+    if (this.preventsPrematureLoops() === false) {
+      return false;
     }
     
     return true;
@@ -170,21 +170,25 @@ class LoopCourseSolver {
         const dotId = r * (this.cols + 1) + c;
         
         // Check horizontal right edge
-        const hIdx = this.getHEdgeIndex(r, c);
-        if (hIdx !== -1 && this.edgeStates[hIdx] === 1) {
-          const neighborId = r * (this.cols + 1) + (c + 1);
-          adj[dotId].push(neighborId);
-          adj[neighborId].push(dotId);
-          totalDrawn++;
+        if (c < this.cols) {
+          const hIdx = r * this.cols + c;
+          if (this.edgeStates[hIdx] === 1) {
+            const neighborId = dotId + 1;
+            adj[dotId].push(neighborId);
+            adj[neighborId].push(dotId);
+            totalDrawn++;
+          }
         }
         
         // Check vertical down edge
-        const vIdx = this.getVEdgeIndex(r, c);
-        if (vIdx !== -1 && this.edgeStates[vIdx] === 1) {
-          const neighborId = (r + 1) * (this.cols + 1) + c;
-          adj[dotId].push(neighborId);
-          adj[neighborId].push(dotId);
-          totalDrawn++;
+        if (r < this.rows) {
+          const vIdx = this.numH + r * (this.cols + 1) + c;
+          if (this.edgeStates[vIdx] === 1) {
+            const neighborId = dotId + (this.cols + 1);
+            adj[dotId].push(neighborId);
+            adj[neighborId].push(dotId);
+            totalDrawn++;
+          }
         }
       }
     }
@@ -301,19 +305,27 @@ class LoopCourseSolver {
     for (let r = 0; r <= this.rows; r++) {
       for (let c = 0; c <= this.cols; c++) {
         const dotId = r * (this.cols + 1) + c;
-        const hIdx = this.getHEdgeIndex(r, c);
-        if (hIdx !== -1 && this.edgeStates[hIdx] === 1) {
-          const neighbor = r * (this.cols + 1) + (c + 1);
-          adj[dotId].push(neighbor);
-          adj[neighbor].push(dotId);
-          edgeCount++;
+        
+        // Check horizontal right edge
+        if (c < this.cols) {
+          const hIdx = r * this.cols + c;
+          if (this.edgeStates[hIdx] === 1) {
+            const neighbor = dotId + 1;
+            adj[dotId].push(neighbor);
+            adj[neighbor].push(dotId);
+            edgeCount++;
+          }
         }
-        const vIdx = this.getVEdgeIndex(r, c);
-        if (vIdx !== -1 && this.edgeStates[vIdx] === 1) {
-          const neighbor = (r + 1) * (this.cols + 1) + c;
-          adj[dotId].push(neighbor);
-          adj[neighbor].push(dotId);
-          edgeCount++;
+        
+        // Check vertical down edge
+        if (r < this.rows) {
+          const vIdx = this.numH + r * (this.cols + 1) + c;
+          if (this.edgeStates[vIdx] === 1) {
+            const neighbor = dotId + (this.cols + 1);
+            adj[dotId].push(neighbor);
+            adj[neighbor].push(dotId);
+            edgeCount++;
+          }
         }
       }
     }

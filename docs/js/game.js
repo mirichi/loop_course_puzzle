@@ -23,6 +23,7 @@ class LoopCourseGame {
     this.secondsElapsed = 0;
     this.isPaused = false;
     this.gameCompleted = false;
+    this.isTouchMode = false;
     
     // Layout parameters
     this.spacing = 54; // Distance between dots in px
@@ -70,31 +71,10 @@ class LoopCourseGame {
       }
     });
 
-    // Global board touchstart: initiate dragging even from empty spaces on mobile
-    this.svg.addEventListener('touchstart', (e) => {
-      if (this.gameCompleted || this.isPaused) return;
-      // If we touched directly on an edge hitbox, let the hitbox handle it
-      if (e.target.classList.contains('edge-hitbox')) return;
-      
-      e.preventDefault(); // Prevent emulated mouse events (ghost clicks)
-      this.isDragging = true;
-      const touch = e.touches[0];
-      this.lastMouseX = touch.clientX;
-      this.lastMouseY = touch.clientY;
-      this.mouseHistory = [{ x: touch.clientX, y: touch.clientY, time: Date.now() }];
-      
-      const startSVG = this.getSVGCoords(touch.clientX, touch.clientY);
-      this.lastSVGX = startSVG.x;
-      this.lastSVGY = startSVG.y;
-      
-      if (this.activeTool === 'cross') {
-        this.dragState = -1;
-      } else if (this.activeTool === 'eraser') {
-        this.dragState = 0;
-      } else {
-        this.dragState = 1;
-      }
-    }, { passive: false });
+    // Detect touch interaction globally to switch to Mobile/Touch mode
+    this.svg.addEventListener('touchstart', () => {
+      this.isTouchMode = true;
+    }, { passive: true });
     
     // Handle tool switching
     const toolBtns = document.querySelectorAll('.tool-btn');
@@ -157,28 +137,7 @@ class LoopCourseGame {
       }
     });
 
-    // Touch dragging on mobile
-    this.svg.addEventListener('touchmove', (e) => {
-      if (!this.isDragging) return;
-      e.preventDefault();
-      
-      const touch = e.touches[0];
-      
-      // Update touch history
-      if (!this.mouseHistory) this.mouseHistory = [];
-      this.mouseHistory.push({ x: touch.clientX, y: touch.clientY, time: Date.now() });
-      if (this.mouseHistory.length > 40) {
-        this.mouseHistory.shift();
-      }
-      
-      const element = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (element && element.classList.contains('edge-hitbox')) {
-        const edgeIdx = parseInt(element.dataset.edgeIdx, 10);
-        if (!isNaN(edgeIdx)) {
-          this.handleEdgeDragEnter(edgeIdx, touch.clientX, touch.clientY);
-        }
-      }
-    }, { passive: false });
+    // (Touch dragging removed to enable browser default zoom and scroll)
   }
 
   startNewGame() {
@@ -226,6 +185,10 @@ class LoopCourseGame {
   renderBoard() {
     this.svg.innerHTML = '';
     
+    // Cache cell and edge elements to avoid slow DOM queries during drag operations
+    this.cellElements = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
+    this.edgeElements = new Array(this.numEdges).fill(null);
+    
     const svgWidth = this.cols * this.spacing + this.padding * 2;
     const svgHeight = this.rows * this.spacing + this.padding * 2;
     this.svg.setAttribute('width', svgWidth);
@@ -265,6 +228,9 @@ class LoopCourseGame {
         
         cellGroup.appendChild(txt);
         this.svg.appendChild(cellGroup);
+        
+        // Store cellGroup in cache
+        this.cellElements[r][c] = cellGroup;
       }
     }
     
@@ -315,19 +281,56 @@ class LoopCourseGame {
       hitbox.setAttribute('class', 'edge-hitbox');
       hitbox.dataset.edgeIdx = edgeIdx;
       
-      // Event listeners for dragging / clicking
-      hitbox.addEventListener('mousedown', (e) => this.handleEdgeMouseDown(e, edgeIdx));
-      hitbox.addEventListener('mouseenter', (e) => this.handleEdgeDragEnter(edgeIdx, e.clientX, e.clientY));
+      // Touch coordinates tracking for fast mobile taps without 300ms delay
+      let touchStartX = 0;
+      let touchStartY = 0;
+      let touchStartTime = 0;
+      
       hitbox.addEventListener('touchstart', (e) => {
-        e.preventDefault(); // Prevent emulated mouse events (ghost clicks)
-        const touch = e.touches[0];
-        this.handleEdgeTouchStart(touch.clientX, touch.clientY, edgeIdx);
+        this.isTouchMode = true;
+        const touch = e.changedTouches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        touchStartTime = Date.now();
+      }, { passive: true });
+      
+      hitbox.addEventListener('touchend', (e) => {
+        if (!this.isTouchMode) return;
+        const touch = e.changedTouches[0];
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        const dist = Math.hypot(dx, dy);
+        const elapsed = Date.now() - touchStartTime;
+        
+        // If movement is negligible and duration is fast, it's a deliberate tap.
+        // Process instantly and cancel emulated mouse events to bypass 300ms delay.
+        if (dist < 6 && elapsed < 300) {
+          e.preventDefault();
+          this.handleEdgeClickTouch(edgeIdx);
+        }
       }, { passive: false });
+      
+      // Event listeners for dragging / clicking (PC Mouse / Fallback)
+      hitbox.addEventListener('mousedown', (e) => {
+        if (this.isTouchMode) return; // Ignore on touch screens to allow default scroll/zoom
+        this.handleEdgeMouseDown(e, edgeIdx);
+      });
+      hitbox.addEventListener('mouseenter', (e) => {
+        if (this.isTouchMode) return; // Ignore on touch screens to allow default scroll/zoom
+        this.handleEdgeDragEnter(edgeIdx, e.clientX, e.clientY);
+      });
+      hitbox.addEventListener('click', (e) => {
+        if (!this.isTouchMode) return; // Only cycle states on touch devices
+        this.handleEdgeClickTouch(edgeIdx);
+      });
       // Block right click context menu on the grid
       hitbox.addEventListener('contextmenu', (e) => e.preventDefault());
       
       edgeGroup.appendChild(hitbox);
       this.svg.appendChild(edgeGroup);
+      
+      // Store edgeGroup in cache
+      this.edgeElements[edgeIdx] = edgeGroup;
       
       this.updateEdgeUI(edgeIdx);
     };
@@ -373,7 +376,7 @@ class LoopCourseGame {
   }
 
   updateEdgeUI(edgeIdx) {
-    const edgeGroup = this.svg.querySelector(`.edge-${edgeIdx}`);
+    const edgeGroup = this.edgeElements ? this.edgeElements[edgeIdx] : this.svg.querySelector(`.edge-${edgeIdx}`);
     if (!edgeGroup) return;
     
     const state = this.edgeStates[edgeIdx];
@@ -390,29 +393,31 @@ class LoopCourseGame {
     }
   }
 
-  updateCluesHighlight() {
-    // Reference global LoopCourseSolver
-    const solver = new window.LoopCourseSolver(this.rows, this.cols, this.clues);
+  updateSingleClueHighlight(r, c) {
+    if (r < 0 || r >= this.rows || c < 0 || c >= this.cols) return;
+    const clue = this.clues[r][c];
+    if (clue === null) return;
     
+    const cellGroup = this.cellElements ? this.cellElements[r][c] : this.svg.querySelector(`.cell-${r}-${c}`);
+    if (!cellGroup) return;
+    
+    const cellEdges = this.getCellEdges(r, c);
+    const linesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === 1 ? 1 : 0), 0);
+    const crossesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === -1 ? 1 : 0), 0);
+    
+    cellGroup.classList.remove('clue-satisfied', 'clue-error');
+    
+    if (linesCount === clue) {
+      cellGroup.classList.add('clue-satisfied');
+    } else if (linesCount > clue || crossesCount > (4 - clue)) {
+      cellGroup.classList.add('clue-error');
+    }
+  }
+
+  updateCluesHighlight() {
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
-        const clue = this.clues[r][c];
-        if (clue === null) continue;
-        
-        const cellGroup = this.svg.querySelector(`.cell-${r}-${c}`);
-        if (!cellGroup) continue;
-        
-        const cellEdges = solver.getCellEdges(r, c);
-        const linesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === 1 ? 1 : 0), 0);
-        const crossesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === -1 ? 1 : 0), 0);
-        
-        cellGroup.classList.remove('clue-satisfied', 'clue-error');
-        
-        if (linesCount === clue) {
-          cellGroup.classList.add('clue-satisfied');
-        } else if (linesCount > clue || crossesCount > (4 - clue)) {
-          cellGroup.classList.add('clue-error');
-        }
+        this.updateSingleClueHighlight(r, c);
       }
     }
   }
@@ -445,28 +450,29 @@ class LoopCourseGame {
     this.applyEdgeStateChange(edgeIdx, this.dragState);
   }
 
-  handleEdgeTouchStart(clientX, clientY, edgeIdx) {
+  handleEdgeClickTouch(edgeIdx) {
     if (this.gameCompleted || this.isPaused) return;
     
-    this.isDragging = true;
-    this.lastMouseX = clientX;
-    this.lastMouseY = clientY;
-    this.mouseHistory = [{ x: clientX, y: clientY, time: Date.now() }];
-    
-    const startSVG = this.getSVGCoords(clientX, clientY);
-    this.lastSVGX = startSVG.x;
-    this.lastSVGY = startSVG.y;
-    
     const currentState = this.edgeStates[edgeIdx];
-    if (this.activeTool === 'cross') {
-      this.dragState = (currentState === -1) ? 0 : -1;
-    } else if (this.activeTool === 'eraser') {
-      this.dragState = 0;
+    let newState = 0;
+    
+    // Cycle: Empty (0) -> Line (1) -> Cross (-1) -> Empty (0)
+    if (currentState === 0) {
+      newState = 1;
+    } else if (currentState === 1) {
+      newState = -1;
     } else {
-      this.dragState = (currentState === 1) ? 0 : 1;
+      newState = 0;
     }
     
-    this.applyEdgeStateChange(edgeIdx, this.dragState);
+    this.applyEdgeStateChange(edgeIdx, newState);
+    
+    // Push to Undo stack as a single change step
+    this.undoStack.push([{ edgeIdx, oldState: currentState, newState }]);
+    this.redoStack = [];
+    this.updateUndoRedoButtons();
+    
+    this.checkWinCondition();
   }
 
   handleEdgeDragEnter(edgeIdx, clientX = null, clientY = null) {
@@ -640,15 +646,14 @@ class LoopCourseGame {
 
   getDotEdges(r, c) {
     const edges = [];
-    const up = this.getVEdgeIndex(r - 1, c);
-    const down = this.getVEdgeIndex(r, c);
-    const left = this.getHEdgeIndex(r, c - 1);
-    const right = this.getHEdgeIndex(r, c);
-    
-    if (up !== -1) edges.push(up);
-    if (down !== -1) edges.push(down);
-    if (left !== -1) edges.push(left);
-    if (right !== -1) edges.push(right);
+    // Up
+    if (r > 0) edges.push(this.numH + (r - 1) * (this.cols + 1) + c);
+    // Down
+    if (r < this.rows) edges.push(this.numH + r * (this.cols + 1) + c);
+    // Left
+    if (c > 0) edges.push(r * this.cols + (c - 1));
+    // Right
+    if (c < this.cols) edges.push(r * this.cols + c);
     return edges;
   }
 
@@ -664,12 +669,12 @@ class LoopCourseGame {
   }
 
   getCellEdges(r, c) {
-    return [
-      this.getHEdgeIndex(r, c),     // Top
-      this.getVEdgeIndex(r, c + 1), // Right
-      this.getHEdgeIndex(r + 1, c), // Bottom
-      this.getVEdgeIndex(r, c)      // Left
-    ];
+    // Inlined for performance to avoid function overhead and bounds checks
+    const top = r * this.cols + c;
+    const right = this.numH + r * (this.cols + 1) + (c + 1);
+    const bottom = (r + 1) * this.cols + c;
+    const left = this.numH + r * (this.cols + 1) + c;
+    return [top, right, bottom, left];
   }
 
   getAdjacentCellsForEdge(edgeIdx) {
@@ -719,7 +724,12 @@ class LoopCourseGame {
     
     this.edgeStates[edgeIdx] = newState;
     this.updateEdgeUI(edgeIdx);
-    this.updateCluesHighlight();
+    
+    // Performance optimization: only update highlights for adjacent cells (max 2) instead of the whole board
+    const adjCells = this.getAdjacentCellsForEdge(edgeIdx);
+    for (const cell of adjCells) {
+      this.updateSingleClueHighlight(cell.r, cell.c);
+    }
   }
 
   undo() {
@@ -802,7 +812,7 @@ class LoopCourseGame {
     // 2. If there are mistakes, highlight all of them in red and return early without changing the board
     if (mistakes.length > 0) {
       mistakes.forEach(idx => {
-        const edgeGroup = this.svg.querySelector(`.edge-${idx}`);
+        const edgeGroup = this.edgeElements ? this.edgeElements[idx] : this.svg.querySelector(`.edge-${idx}`);
         if (edgeGroup) {
           edgeGroup.classList.add('error-pulse');
           setTimeout(() => {
@@ -838,7 +848,7 @@ class LoopCourseGame {
       this.updateUndoRedoButtons();
 
       // Trigger golden pulsing glow animation on the hinted edge
-      const edgeGroup = this.svg.querySelector(`.edge-${hintIdx}`);
+      const edgeGroup = this.edgeElements ? this.edgeElements[hintIdx] : this.svg.querySelector(`.edge-${hintIdx}`);
       if (edgeGroup) {
         edgeGroup.classList.add('hint-pulse');
         setTimeout(() => {

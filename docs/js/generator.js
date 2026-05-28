@@ -539,7 +539,11 @@ class LoopCourseGenerator {
         if (solver.isSolved()) return true;
         
         // For Medium/Hard, allow a tiny, ultra-shallow backtracking search to handle minor logic chains
-        const maxSteps = (difficulty === 'easy') ? 0 : 50; 
+        const totalCells = this.rows * this.cols;
+        let maxSteps = (difficulty === 'easy') ? 0 : 50; 
+        if (totalCells > 150) {
+          maxSteps = (difficulty === 'easy') ? 0 : 15; // Reduce backtracking depth for huge grids to keep generation fast
+        }
         if (maxSteps === 0) return false; // Easy puzzles must be solvable by pure deduction!
         
         let solutions = [];
