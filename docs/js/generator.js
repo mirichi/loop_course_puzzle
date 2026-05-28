@@ -511,108 +511,241 @@ class LoopCourseGenerator {
     const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
     let currentClueCount = this.rows * this.cols;
     
-    for (const [r, c] of cellCoords) {
-      if (currentClueCount <= targetKeepCount) {
-        break; // Reached target clue count for this difficulty
+    const isLargeBoard = this.rows * this.cols > 150;
+    
+    // Fast logical solvability checker
+    const checkSolvability = () => {
+      const solver = new window.LoopCourseSolver(this.rows, this.cols, clues);
+      
+      // 1. Run the super fast logical deduction engine
+      const success = solver.deduct();
+      if (!success) return false; // Contradiction
+      
+      // If deduction solved the board completely, it is logically solvable (perfect unique solution)!
+      if (solver.isSolved()) return true;
+      
+      // For Medium/Hard, allow a tiny, ultra-shallow backtracking search to handle minor logic chains
+      const totalCells = this.rows * this.cols;
+      let maxSteps = (difficulty === 'easy') ? 0 : 50; 
+      if (totalCells > 150) {
+        // Keep backtrack depth extremely shallow on large grids.
+        // This makes each solver run 10x-50x faster, enabling full-grid minimization.
+        maxSteps = (difficulty === 'easy') ? 0 : (difficulty === 'medium' ? 2 : 8);
       }
+      if (maxSteps === 0) return false; // Easy puzzles must be solvable by pure deduction!
       
-      const originalClue = clues[r][c];
+      let solutions = [];
+      let steps = 0;
       
-      // If we are on easy, let's keep some 3s as they are great starting anchors (no 0 anchors!)
-      if (difficulty === 'easy' && originalClue === 3 && Math.random() < 0.8) {
-        continue;
-      }
-      
-      // Temporarily remove clue
-      clues[r][c] = null;
-      currentClueCount--;
-      
-      // Fast logical solvability checker
-      const checkSolvability = () => {
-        const solver = new window.LoopCourseSolver(this.rows, this.cols, clues);
-        
-        // 1. Run the super fast logical deduction engine
-        const success = solver.deduct();
-        if (!success) return false; // Contradiction
-        
-        // If deduction solved the board completely, it is logically solvable (perfect unique solution)!
-        if (solver.isSolved()) return true;
-        
-        // For Medium/Hard, allow a tiny, ultra-shallow backtracking search to handle minor logic chains
-        const totalCells = this.rows * this.cols;
-        let maxSteps = (difficulty === 'easy') ? 0 : 50; 
-        if (totalCells > 150) {
-          maxSteps = (difficulty === 'easy') ? 0 : 15; // Reduce backtracking depth for huge grids to keep generation fast
+      const backtrack = () => {
+        steps++;
+        if (steps > maxSteps) {
+          solutions.push("timeout");
+          return;
         }
-        if (maxSteps === 0) return false; // Easy puzzles must be solvable by pure deduction!
         
-        let solutions = [];
-        let steps = 0;
+        const backup = [...solver.edgeStates];
+        if (!solver.deduct()) {
+          solver.edgeStates = backup;
+          return;
+        }
         
-        const backtrack = () => {
-          steps++;
-          if (steps > maxSteps) {
-            solutions.push("timeout");
-            return;
-          }
-          
-          const backup = [...solver.edgeStates];
-          if (!solver.deduct()) {
-            solver.edgeStates = backup;
-            return;
-          }
-          
-          if (solver.isSolved()) {
-            solutions.push([...solver.edgeStates]);
-            solver.edgeStates = backup;
-            return;
-          }
-          
-          const undecidedIdx = solver.edgeStates.indexOf(0);
-          if (undecidedIdx === -1) {
-            solver.edgeStates = backup;
-            return;
-          }
-          
-          if (solutions.length >= 2) {
-            solver.edgeStates = backup;
-            return;
-          }
-          
-          let branchIdx = undecidedIdx;
-          outer: for (let r = 0; r < solver.rows; r++) {
-            for (let c = 0; c < solver.cols; c++) {
-              if (solver.clues[r][c] !== null) {
-                const cellEdges = solver.getCellEdges(r, c);
-                for (const idx of cellEdges) {
-                  if (solver.edgeStates[idx] === 0) {
-                    branchIdx = idx;
-                    break outer;
-                  }
+        if (solver.isSolved()) {
+          solutions.push([...solver.edgeStates]);
+          solver.edgeStates = backup;
+          return;
+        }
+        
+        const undecidedIdx = solver.edgeStates.indexOf(0);
+        if (undecidedIdx === -1) {
+          solver.edgeStates = backup;
+          return;
+        }
+        
+        if (solutions.length >= 2) {
+          solver.edgeStates = backup;
+          return;
+        }
+        
+        let branchIdx = undecidedIdx;
+        outer: for (let r = 0; r < solver.rows; r++) {
+          for (let c = 0; c < solver.cols; c++) {
+            if (solver.clues[r][c] !== null) {
+              const cellEdges = solver.getCellEdges(r, c);
+              for (const idx of cellEdges) {
+                if (solver.edgeStates[idx] === 0) {
+                  branchIdx = idx;
+                  break outer;
                 }
               }
             }
           }
-          
-          solver.edgeStates[branchIdx] = 1;
-          backtrack();
-          
-          if (solutions.length >= 2) {
-            solver.edgeStates = backup;
-            return;
-          }
-          
-          solver.edgeStates[branchIdx] = -1;
-          backtrack();
-          
-          solver.edgeStates = backup;
-        };
+        }
         
+        solver.edgeStates[branchIdx] = 1;
         backtrack();
-        return solutions.length === 1 && solutions[0] !== "timeout";
+        
+        if (solutions.length >= 2) {
+          solver.edgeStates = backup;
+          return;
+        }
+        
+        solver.edgeStates[branchIdx] = -1;
+        backtrack();
+        
+        solver.edgeStates = backup;
       };
       
-      // If hiding this clue makes the puzzle unsolvable or non-unique, restore it!
+      backtrack();
+      return solutions.length === 1 && solutions[0] !== "timeout";
+    };
+
+    // Pass 1: Large Chunks (size 20 for large boards, size 8 for medium boards)
+    if (isLargeBoard) {
+      const chunkSize1 = 20;
+      for (let i = 0; i < cellCoords.length; i += chunkSize1) {
+        if (currentClueCount <= targetKeepCount) break;
+        
+        const chunk = [];
+        const originalVals = [];
+        
+        for (let j = 0; j < chunkSize1 && (i + j) < cellCoords.length; j++) {
+          const [r, c] = cellCoords[i + j];
+          const val = clues[r][c];
+          if (val !== null) {
+            if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
+              continue;
+            }
+            chunk.push([r, c]);
+            originalVals.push(val);
+          }
+        }
+        
+        if (chunk.length === 0) continue;
+        if (currentClueCount - chunk.length < targetKeepCount) {
+          // If clearing this entire chunk goes below the target, we don't clear all at once.
+          // Let subsequent passes handle it with smaller chunks or individual cells.
+          continue;
+        }
+        
+        // Temporarily remove all clues in this chunk
+        for (const [r, c] of chunk) {
+          clues[r][c] = null;
+        }
+        
+        if (checkSolvability()) {
+          currentClueCount -= chunk.length;
+        } else {
+          // Restore clues
+          for (let k = 0; k < chunk.length; k++) {
+            const [r, c] = chunk[k];
+            clues[r][c] = originalVals[k];
+          }
+        }
+      }
+    } else if (this.rows * this.cols > 60) {
+      // Medium boards (e.g. 10x10) can benefit from a smaller large-chunk pass (size 8)
+      const chunkSize1 = 8;
+      for (let i = 0; i < cellCoords.length; i += chunkSize1) {
+        if (currentClueCount <= targetKeepCount) break;
+        
+        const chunk = [];
+        const originalVals = [];
+        
+        for (let j = 0; j < chunkSize1 && (i + j) < cellCoords.length; j++) {
+          const [r, c] = cellCoords[i + j];
+          const val = clues[r][c];
+          if (val !== null) {
+            if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
+              continue;
+            }
+            chunk.push([r, c]);
+            originalVals.push(val);
+          }
+        }
+        
+        if (chunk.length === 0) continue;
+        if (currentClueCount - chunk.length < targetKeepCount) continue;
+        
+        for (const [r, c] of chunk) {
+          clues[r][c] = null;
+        }
+        
+        if (checkSolvability()) {
+          currentClueCount -= chunk.length;
+        } else {
+          for (let k = 0; k < chunk.length; k++) {
+            const [r, c] = chunk[k];
+            clues[r][c] = originalVals[k];
+          }
+        }
+      }
+    }
+
+    // Pass 2: Small Chunks (size 5 for large/medium boards, size 3 for small boards)
+    const remainingCoordsAfterPass1 = [];
+    for (const [r, c] of cellCoords) {
+      if (clues[r][c] !== null) {
+        remainingCoordsAfterPass1.push([r, c]);
+      }
+    }
+    
+    const chunkSize2 = isLargeBoard ? 5 : (this.rows * this.cols > 60 ? 3 : 2);
+    for (let i = 0; i < remainingCoordsAfterPass1.length; i += chunkSize2) {
+      if (currentClueCount <= targetKeepCount) break;
+      
+      const chunk = [];
+      const originalVals = [];
+      
+      for (let j = 0; j < chunkSize2 && (i + j) < remainingCoordsAfterPass1.length; j++) {
+        const [r, c] = remainingCoordsAfterPass1[i + j];
+        const val = clues[r][c];
+        if (val !== null) {
+          if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
+            continue;
+          }
+          chunk.push([r, c]);
+          originalVals.push(val);
+        }
+      }
+      
+      if (chunk.length === 0) continue;
+      if (currentClueCount - chunk.length < targetKeepCount) continue;
+      
+      for (const [r, c] of chunk) {
+        clues[r][c] = null;
+      }
+      
+      if (checkSolvability()) {
+        currentClueCount -= chunk.length;
+      } else {
+        for (let k = 0; k < chunk.length; k++) {
+          const [r, c] = chunk[k];
+          clues[r][c] = originalVals[k];
+        }
+      }
+    }
+
+    // Pass 3: Individual Fine-tuning (size 1)
+    // Run individual sweeps on whatever is left to prune any remaining redundant clues
+    const remainingCoordsAfterPass2 = [];
+    for (const [r, c] of cellCoords) {
+      if (clues[r][c] !== null) {
+        remainingCoordsAfterPass2.push([r, c]);
+      }
+    }
+    
+    for (const [r, c] of remainingCoordsAfterPass2) {
+      if (currentClueCount <= targetKeepCount) break;
+      
+      const originalClue = clues[r][c];
+      if (difficulty === 'easy' && originalClue === 3 && Math.random() < 0.8) {
+        continue;
+      }
+      
+      clues[r][c] = null;
+      currentClueCount--;
+      
       if (!checkSolvability()) {
         clues[r][c] = originalClue;
         currentClueCount++;
