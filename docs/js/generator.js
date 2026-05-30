@@ -581,6 +581,7 @@ class LoopCourseGenerator {
     let keepRatio = 0.45; // Default for easy
     if (difficulty === 'medium') keepRatio = 0.32;
     if (difficulty === 'hard') keepRatio = 0.22;
+    if (difficulty === 'expert') keepRatio = 0.15; // Expert: 15% remaining clues
     
     const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
     let currentClueCount = this.rows * this.cols;
@@ -594,7 +595,11 @@ class LoopCourseGenerator {
       const totalCells = this.rows * this.cols;
       let maxSteps = (difficulty === 'easy') ? 0 : 50; 
       if (totalCells > 150) {
-        maxSteps = (difficulty === 'easy') ? 0 : (difficulty === 'medium' ? 2 : 8);
+        if (difficulty === 'easy') maxSteps = 0;
+        else if (difficulty === 'medium') maxSteps = 2;
+        else if (difficulty === 'hard') maxSteps = 8;
+        else if (difficulty === 'expert') maxSteps = 12;
+        else maxSteps = 8;
       }
       
       if (maxSteps === 0) {

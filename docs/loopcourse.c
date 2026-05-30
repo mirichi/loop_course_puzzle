@@ -991,7 +991,11 @@ static bool checkSolvability(const char* difficulty) {
     int maxSteps = strcmp(difficulty, "easy") == 0 ? 0 : 50;
     int totalCells = rows * cols;
     if (totalCells > 150) {
-        maxSteps = strcmp(difficulty, "easy") == 0 ? 0 : (strcmp(difficulty, "medium") == 0 ? 2 : 8);
+        if (strcmp(difficulty, "easy") == 0) maxSteps = 0;
+        else if (strcmp(difficulty, "medium") == 0) maxSteps = 2;
+        else if (strcmp(difficulty, "hard") == 0) maxSteps = 8;
+        else if (strcmp(difficulty, "expert") == 0) maxSteps = 12;
+        else maxSteps = 8;
     }
 
     // Backup current edgeStates before solving
@@ -1065,6 +1069,7 @@ void generate_puzzle_wasm(const char* difficulty) {
     double keepRatio = 0.45;
     if (strcmp(difficulty, "medium") == 0) keepRatio = 0.32;
     else if (strcmp(difficulty, "hard") == 0) keepRatio = 0.22;
+    else if (strcmp(difficulty, "expert") == 0) keepRatio = 0.15; // Expert: 15% remaining clues
 
     int targetKeepCount = (int)(rows * cols * keepRatio);
     int currentClueCount = rows * cols;
