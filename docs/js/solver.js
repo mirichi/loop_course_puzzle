@@ -14,7 +14,11 @@ class LoopCourseSolver {
     this.numEdges = this.numH + this.numV;
     this.numDots = (rows + 1) * (cols + 1);
     
-    this.edgeStates = new Array(this.numEdges).fill(0); // 0 = empty, 1 = line, -1 = cross
+    this.edgeStates = new Int8Array(this.numEdges); // 0 = empty, 1 = line, -1 = cross
+    
+    // Pre-allocate backup arrays for backtracking search (avoids constant GC load and heavy memory allocation)
+    this.maxBackupDepth = 200;
+    this.backupStack = Array.from({ length: this.maxBackupDepth }, () => new Int8Array(this.numEdges));
   }
 
   // Coordinate mapping utilities
@@ -372,36 +376,52 @@ class LoopCourseSolver {
   }
 
   // Solves the puzzle using backtracking.
-  // Returns number of solutions found: 0, 1, or 2 (stops early if a second is found to speed up uniqueness check).
+  // Returns number of solutions found: 0, 1, or 2.
   // If `findSingle` is true, it stops immediately after finding the first solution.
-  solve(findSingle = false) {
+  // If `maxSteps` is provided, it limits the number of exploration steps.
+  solve(findSingle = false, maxSteps = Infinity) {
     let solutions = [];
+    let steps = 0;
     
-    const backtrack = () => {
+    const backtrack = (depth = 0) => {
+      steps++;
+      if (steps > maxSteps) {
+        solutions.push("timeout");
+        return;
+      }
+      
+      if (depth >= this.maxBackupDepth) {
+        return;
+      }
+      
       // 1. Run deduction rules
-      const backup = [...this.edgeStates];
+      // Use pre-allocated backup typed array and fast .set() memory copy
+      const backup = this.backupStack[depth];
+      backup.set(this.edgeStates);
+      
       if (!this.deduct()) {
-        this.edgeStates = backup;
+        this.edgeStates.set(backup);
         return; // Contradiction found, backtrack
       }
       
       // 2. Check if solved
       if (this.isSolved()) {
-        solutions.push([...this.edgeStates]);
-        this.edgeStates = backup;
+        // Need to make a new copy of current solution to return
+        solutions.push(new Int8Array(this.edgeStates));
+        this.edgeStates.set(backup);
         return;
       }
       
       // If all edges are decided but not a valid solution, backtrack
       const undecidedIdx = this.edgeStates.indexOf(0);
       if (undecidedIdx === -1) {
-        this.edgeStates = backup;
+        this.edgeStates.set(backup);
         return;
       }
       
       // Stop search if we already found enough solutions
       if (solutions.length >= 2 || (findSingle && solutions.length >= 1)) {
-        this.edgeStates = backup;
+        this.edgeStates.set(backup);
         return;
       }
       
@@ -426,22 +446,22 @@ class LoopCourseSolver {
       
       // Try setting edge to 1 (line)
       this.edgeStates[branchIdx] = 1;
-      backtrack();
+      backtrack(depth + 1);
       
       if (solutions.length >= 2 || (findSingle && solutions.length >= 1)) {
-        this.edgeStates = backup;
+        this.edgeStates.set(backup);
         return;
       }
       
       // Try setting edge to -1 (cross)
       this.edgeStates[branchIdx] = -1;
-      backtrack();
+      backtrack(depth + 1);
       
       // Restore state
-      this.edgeStates = backup;
+      this.edgeStates.set(backup);
     };
     
-    backtrack();
+    backtrack(0);
     return solutions;
   }
 }

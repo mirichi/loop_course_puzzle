@@ -2,6 +2,40 @@
  * Loop Course Puzzle Generator
  * Generates beautiful, logically solvable Loop Course puzzles of different difficulties.
  */
+
+// Global variables for WASM module and API bindings
+let wasmModule = null;
+let wasmInitGrid = null;
+let wasmGetEdgeStatesPtr = null;
+let wasmGetCluesPtr = null;
+let wasmGeneratePuzzleWasm = null;
+let wasmSolvePuzzleWasm = null;
+let wasmGetSolutionPtr = null;
+let wasmSetRandomSeed = null;
+
+// Asynchronously load the LoopCourse WebAssembly module
+if (typeof window.createLoopCourseModule === 'function') {
+  window.createLoopCourseModule().then(Module => {
+    wasmModule = Module;
+    wasmInitGrid = Module.cwrap('init_grid', 'void', ['number', 'number']);
+    wasmGetEdgeStatesPtr = Module.cwrap('get_edge_states_ptr', 'number', []);
+    wasmGetCluesPtr = Module.cwrap('get_clues_ptr', 'number', []);
+    wasmGeneratePuzzleWasm = Module.cwrap('generate_puzzle_wasm', 'void', ['string']);
+    wasmSolvePuzzleWasm = Module.cwrap('solve_puzzle_wasm', 'number', ['boolean', 'number']);
+    wasmGetSolutionPtr = Module.cwrap('get_solution_ptr', 'number', ['number']);
+    wasmSetRandomSeed = Module.cwrap('set_random_seed', 'void', ['number']);
+    
+    console.log("LoopCourse WASM module loaded successfully!");
+    
+    const statusTextEl = document.getElementById('status-text');
+    if (statusTextEl && statusTextEl.textContent.includes('準備完了')) {
+      statusTextEl.textContent = '準備完了（WASM高速エンジン稼働中）！すべての数字を満たす1つのループを作ろう。';
+    }
+  }).catch(err => {
+    console.error("Failed to load WASM module:", err);
+  });
+}
+
 class LoopCourseGenerator {
   constructor(rows, cols) {
     this.rows = rows;
@@ -464,6 +498,46 @@ class LoopCourseGenerator {
    * @returns {object} { clues, solution }
    */
   generate(difficulty = 'medium') {
+    // If WebAssembly module is loaded, execute the near-instant C engine!
+    if (wasmModule && wasmGeneratePuzzleWasm) {
+      console.log("Generating LoopCourse puzzle via high-speed WebAssembly (C engine)...");
+      
+      // 1. Initialize grid parameters and random seed
+      wasmInitGrid(this.rows, this.cols);
+      wasmSetRandomSeed(Math.floor(Math.random() * 2147483647));
+      
+      // 2. Trigger the C generator
+      wasmGeneratePuzzleWasm(difficulty);
+      
+      // 3. Extract generated clues and solution from WASM memory (Zero-Copy)
+      const cluesPtr = wasmGetCluesPtr();
+      const edgeStatesPtr = wasmGetEdgeStatesPtr();
+      
+      const numEdges = (this.rows + 1) * this.cols + this.rows * (this.cols + 1);
+      const totalCells = this.rows * this.cols;
+      
+      const wasmCluesData = wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + totalCells);
+      const wasmEdgeData = wasmModule.HEAP8.subarray(edgeStatesPtr, edgeStatesPtr + numEdges);
+      
+      // Parse clues to JS matrix
+      const clues = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          const val = wasmCluesData[r * this.cols + c];
+          clues[r][c] = (val === -1) ? null : val;
+        }
+      }
+      
+      // Copy the solution array (typed subarray)
+      const solution = new Int8Array(wasmEdgeData);
+      
+      return {
+        clues,
+        solution
+      };
+    }
+
+    console.log("WebAssembly not ready. Falling back to JavaScript engine.");
     // Step 1: Generate a random loop and corresponding clues
     let { cells, loopEdges } = this.generateRandomLoop();
     let originalClues = this.calculateClues(cells);
@@ -517,86 +591,21 @@ class LoopCourseGenerator {
     const checkSolvability = () => {
       const solver = new window.LoopCourseSolver(this.rows, this.cols, clues);
       
-      // 1. Run the super fast logical deduction engine
-      const success = solver.deduct();
-      if (!success) return false; // Contradiction
-      
-      // If deduction solved the board completely, it is logically solvable (perfect unique solution)!
-      if (solver.isSolved()) return true;
-      
-      // For Medium/Hard, allow a tiny, ultra-shallow backtracking search to handle minor logic chains
       const totalCells = this.rows * this.cols;
       let maxSteps = (difficulty === 'easy') ? 0 : 50; 
       if (totalCells > 150) {
-        // Keep backtrack depth extremely shallow on large grids.
-        // This makes each solver run 10x-50x faster, enabling full-grid minimization.
         maxSteps = (difficulty === 'easy') ? 0 : (difficulty === 'medium' ? 2 : 8);
       }
-      if (maxSteps === 0) return false; // Easy puzzles must be solvable by pure deduction!
       
-      let solutions = [];
-      let steps = 0;
+      if (maxSteps === 0) {
+        // Pure deduction check
+        const success = solver.deduct();
+        return success && solver.isSolved();
+      }
       
-      const backtrack = () => {
-        steps++;
-        if (steps > maxSteps) {
-          solutions.push("timeout");
-          return;
-        }
-        
-        const backup = [...solver.edgeStates];
-        if (!solver.deduct()) {
-          solver.edgeStates = backup;
-          return;
-        }
-        
-        if (solver.isSolved()) {
-          solutions.push([...solver.edgeStates]);
-          solver.edgeStates = backup;
-          return;
-        }
-        
-        const undecidedIdx = solver.edgeStates.indexOf(0);
-        if (undecidedIdx === -1) {
-          solver.edgeStates = backup;
-          return;
-        }
-        
-        if (solutions.length >= 2) {
-          solver.edgeStates = backup;
-          return;
-        }
-        
-        let branchIdx = undecidedIdx;
-        outer: for (let r = 0; r < solver.rows; r++) {
-          for (let c = 0; c < solver.cols; c++) {
-            if (solver.clues[r][c] !== null) {
-              const cellEdges = solver.getCellEdges(r, c);
-              for (const idx of cellEdges) {
-                if (solver.edgeStates[idx] === 0) {
-                  branchIdx = idx;
-                  break outer;
-                }
-              }
-            }
-          }
-        }
-        
-        solver.edgeStates[branchIdx] = 1;
-        backtrack();
-        
-        if (solutions.length >= 2) {
-          solver.edgeStates = backup;
-          return;
-        }
-        
-        solver.edgeStates[branchIdx] = -1;
-        backtrack();
-        
-        solver.edgeStates = backup;
-      };
+      // Use solver's pre-allocated fast backtracking engine
+      const solutions = solver.solve(false, maxSteps);
       
-      backtrack();
       return solutions.length === 1 && solutions[0] !== "timeout";
     };
 

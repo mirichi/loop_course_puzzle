@@ -168,7 +168,7 @@ class LoopCourseGame {
       this.numV = this.rows * (this.cols + 1);
       this.numEdges = this.numH + this.numV;
       
-      this.edgeStates = new Array(this.numEdges).fill(0);
+      this.edgeStates = new Int8Array(this.numEdges);
       this.undoStack = [];
       this.redoStack = [];
       this.currentDragGroup = [];
