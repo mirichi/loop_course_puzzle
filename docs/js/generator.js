@@ -249,7 +249,7 @@ class LoopCourseGenerator {
               };
               
               if (insideNeighbors > 0 && insideNeighbors < 4 && !wouldForm4x4Inside()) {
-                const neighborScore = (insideNeighbors === 1) ? 35 : ((insideNeighbors === 2) ? 5 : 1);
+                const neighborScore = (insideNeighbors === 1) ? 8.0 : ((insideNeighbors === 2) ? 5.0 : 1.0);
                 
                 const dist = Math.sqrt(Math.pow(r - avgR, 2) + Math.pow(c - avgC, 2));
                 const distScore = 1.0 + dist * 0.25;
@@ -276,9 +276,9 @@ class LoopCourseGenerator {
                     const [nnr, nnc] = secondNeighbors[0];
                     const isCollinear = (r === nr && nr === nnr) || (c === nc && nc === nnc);
                     if (isCollinear) {
-                      bendMultiplier = 0.75; // Relaxed straight penalty (0.3 -> 0.75)
+                      bendMultiplier = 0.90; // Balanced straight penalty (0.75 -> 0.90)
                     } else {
-                      bendMultiplier = 1.35; // Relaxed turn bonus (2.0 -> 1.35)
+                      bendMultiplier = 1.10; // Balanced turn bonus (1.35 -> 1.10)
                     }
                   }
                 }

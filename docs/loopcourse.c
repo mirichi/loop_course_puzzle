@@ -760,7 +760,7 @@ static void generateRandomLoop() {
                         }
 
                         if (insideNeighbors > 0 && insideNeighbors < 4 && !wouldForm4x4Inside) {
-                            double neighborScore = (insideNeighbors == 1) ? 35.0 : ((insideNeighbors == 2) ? 5.0 : 1.0);
+                            double neighborScore = (insideNeighbors == 1) ? 8.0 : ((insideNeighbors == 2) ? 5.0 : 1.0);
                             double dist = sqrt(pow(r - avgR, 2) + pow(c - avgC, 2));
                             double distScore = 1.0 + dist * 0.25;
 
@@ -784,8 +784,8 @@ static void generateRandomLoop() {
                                  if (secondNeighborsCount == 1) {
                                      bool isCollinear = (r == firstNeighborR && firstNeighborR == secondR) || 
                                                         (c == firstNeighborC && firstNeighborC == secondC);
-                                     if (isCollinear) bendMultiplier = 0.75; // Relaxed straight penalty (0.3 -> 0.75)
-                                     else bendMultiplier = 1.35;            // Relaxed turn bonus (2.0 -> 1.35)
+                                     if (isCollinear) bendMultiplier = 0.90; // Balanced straight penalty (0.75 -> 0.90)
+                                     else bendMultiplier = 1.10;            // Balanced turn bonus (1.35 -> 1.10)
                                  }
                             }
 
