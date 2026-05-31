@@ -761,8 +761,8 @@ static void generateRandomLoop() {
 
                         if (insideNeighbors > 0 && insideNeighbors < 4 && !wouldForm4x4Inside) {
                             double neighborScore = (insideNeighbors == 1) ? 35.0 : ((insideNeighbors == 2) ? 5.0 : 1.0);
-                            double dist = pow(r - avgR, 2) + pow(c - avgC, 2);
-                            double distScore = 1.0 + dist * 0.15;
+                            double dist = sqrt(pow(r - avgR, 2) + pow(c - avgC, 2));
+                            double distScore = 1.0 + dist * 0.25;
 
                             bool isBorder = (r == 0 || r == rows - 1 || c == 0 || c == cols - 1);
                             double borderPenalty = (totalCells <= 64 && isBorder) ? 0.35 : 1.0;
@@ -781,12 +781,12 @@ static void generateRandomLoop() {
                                     }
                                 }
 
-                                if (secondNeighborsCount == 1) {
-                                    bool isCollinear = (r == firstNeighborR && firstNeighborR == secondR) || 
-                                                       (c == firstNeighborC && firstNeighborC == secondC);
-                                    if (isCollinear) bendMultiplier = 0.3; // Straight penalty
-                                    else bendMultiplier = 2.0;            // Curved turn bonus
-                                }
+                                 if (secondNeighborsCount == 1) {
+                                     bool isCollinear = (r == firstNeighborR && firstNeighborR == secondR) || 
+                                                        (c == firstNeighborC && firstNeighborC == secondC);
+                                     if (isCollinear) bendMultiplier = 0.75; // Relaxed straight penalty (0.3 -> 0.75)
+                                     else bendMultiplier = 1.35;            // Relaxed turn bonus (2.0 -> 1.35)
+                                 }
                             }
 
                             double sectorBonus = 1.0;

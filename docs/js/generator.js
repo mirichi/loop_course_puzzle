@@ -251,8 +251,8 @@ class LoopCourseGenerator {
               if (insideNeighbors > 0 && insideNeighbors < 4 && !wouldForm4x4Inside()) {
                 const neighborScore = (insideNeighbors === 1) ? 35 : ((insideNeighbors === 2) ? 5 : 1);
                 
-                const dist = Math.pow(r - avgR, 2) + Math.pow(c - avgC, 2);
-                const distScore = 1.0 + dist * 0.15;
+                const dist = Math.sqrt(Math.pow(r - avgR, 2) + Math.pow(c - avgC, 2));
+                const distScore = 1.0 + dist * 0.25;
                 
                 const isBorder = (r === 0 || r === this.rows - 1 || c === 0 || c === this.cols - 1);
                 // Discourage border sticking on small grids by applying a penalty
@@ -276,9 +276,9 @@ class LoopCourseGenerator {
                     const [nnr, nnc] = secondNeighbors[0];
                     const isCollinear = (r === nr && nr === nnr) || (c === nc && nc === nnc);
                     if (isCollinear) {
-                      bendMultiplier = 0.3; // Balanced straight penalty
+                      bendMultiplier = 0.75; // Relaxed straight penalty (0.3 -> 0.75)
                     } else {
-                      bendMultiplier = 2.0; // Balanced bending bonus
+                      bendMultiplier = 1.35; // Relaxed turn bonus (2.0 -> 1.35)
                     }
                   }
                 }
