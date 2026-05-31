@@ -275,10 +275,11 @@ class LoopCourseGenerator {
                   if (secondNeighbors.length === 1) {
                     const [nnr, nnc] = secondNeighbors[0];
                     const isCollinear = (r === nr && nr === nnr) || (c === nc && nc === nnc);
+                    const isBorder = (r === 0 || r === this.rows - 1 || c === 0 || c === this.cols - 1);
                     if (isCollinear) {
-                      bendMultiplier = 0.90; // Balanced straight penalty (0.75 -> 0.90)
+                      bendMultiplier = isBorder ? 0.25 : 0.90;
                     } else {
-                      bendMultiplier = 1.10; // Balanced turn bonus (1.35 -> 1.10)
+                      bendMultiplier = isBorder ? 2.20 : 1.10;
                     }
                   }
                 }
