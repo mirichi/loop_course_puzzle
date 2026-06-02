@@ -29,6 +29,13 @@ int numDots = 0;
 int8_t edgeStates[MAX_EDGES]; // 0 = empty, 1 = line, -1 = cross
 int8_t clues[MAX_CELLS];       // 0-3 cell clues, or -1 for null/empty
 
+// Debug globals
+static const char* dbgSource = "init";
+static int dbgCell = -1;
+static int dbgDot = -1;
+static int8_t dbgTargetEdges[MAX_EDGES];
+static bool hasDbgTarget = false;
+
 // Generator variables
 static int8_t genCells[MAX_ROWS][MAX_COLS];
 
@@ -95,6 +102,28 @@ static inline bool dsuUnion(int u, int v) {
         dsuRank[rootV]++;
     }
     return true;
+}
+
+static inline void dsuInitFromCurrent() {
+    dsuInit();
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] == 1) {
+            int dotA, dotB;
+            if (i < numH) {
+                int r = i / cols;
+                int c = i % cols;
+                dotA = r * (cols + 1) + c;
+                dotB = dotA + 1;
+            } else {
+                int vIdx = i - numH;
+                int r = vIdx / (cols + 1);
+                int c = vIdx % (cols + 1);
+                dotA = r * (cols + 1) + c;
+                dotB = dotA + (cols + 1);
+            }
+            dsuUnion(dotA, dotB);
+        }
+    }
 }
 
 static inline void dsuRollback(int checkpoint) {
@@ -222,6 +251,8 @@ static inline int getDotEdges(int r, int c, int* outEdges) {
 static inline bool setEdgeState(int edgeIdx, int8_t state) {
     if (edgeStates[edgeIdx] == state) return true; // Already set to this state
     if (edgeStates[edgeIdx] != 0) return false;    // Contradiction: edge is already determined to a different state
+    
+
     
     if (state == 1) {
         int dotA, dotB;
@@ -389,6 +420,9 @@ static inline bool deductIncremental() {
         // 1. Process cells
         int cellIdx = dequeueCell();
         if (cellIdx != -1) {
+            dbgSource = "cell";
+            dbgCell = cellIdx;
+            dbgDot = -1;
             int r = cellIdx / cols;
             int c = cellIdx % cols;
             int clue = clues[cellIdx];
@@ -414,20 +448,28 @@ static inline bool deductIncremental() {
                 if (undecidedCount > 0) {
                     if (lines == clue) {
                         for (int j = 0; j < undecidedCount; j++) {
-                            if (!setEdgeState(undecided[j], -1)) return false;
+                            if (!setEdgeState(undecided[j], -1)) {
+                                return false;
+                            }
                         }
                     } else if (crosses == (4 - clue)) {
                         for (int j = 0; j < undecidedCount; j++) {
-                            if (!setEdgeState(undecided[j], 1)) return false;
+                            if (!setEdgeState(undecided[j], 1)) {
+                                return false;
+                            }
                         }
                     }
                 }
+
             }
         }
         
         // 2. Process dots
         int dotIdx = dequeueDot();
         if (dotIdx != -1) {
+            dbgSource = "dot";
+            dbgDot = dotIdx;
+            dbgCell = -1;
             int r = dotIdx / (cols + 1);
             int c = dotIdx % (cols + 1);
             int dotEdges[4];
@@ -451,12 +493,55 @@ static inline bool deductIncremental() {
             if (undecidedCount > 0) {
                 if (lines == 2) {
                     for (int j = 0; j < undecidedCount; j++) {
-                        if (!setEdgeState(undecided[j], -1)) return false;
+                        if (!setEdgeState(undecided[j], -1)) {
+                            return false;
+                        }
                     }
                 } else if (lines == 1 && undecidedCount == 1) {
-                    if (!setEdgeState(undecided[0], 1)) return false;
+                    if (!setEdgeState(undecided[0], 1)) {
+                        return false;
+                    }
                 } else if (lines == 0 && undecidedCount == 1) {
-                    if (!setEdgeState(undecided[0], -1)) return false;
+                    if (!setEdgeState(undecided[0], -1)) {
+                        return false;
+                    }
+                } else if (lines == 0 && undecidedCount == 2) {
+                    // Rule A: Generalized Corner Heuristic
+                    int e1 = undecided[0];
+                    int e2 = undecided[1];
+                    bool e1IsH = (e1 < numH);
+                    bool e2IsH = (e2 < numH);
+                    if (e1IsH != e2IsH) {
+                        int hEdge = e1IsH ? e1 : e2;
+                        int vEdge = e1IsH ? e2 : e1;
+                        int hr = hEdge / cols;
+                        int hc = hEdge % cols;
+                        int vr = (vEdge - numH) / (cols + 1);
+                        int vc = (vEdge - numH) % (cols + 1);
+                        
+                        int cr = -1, cc = -1;
+                        if (hc == c && vr == r) {
+                            cr = r; cc = c;
+                        } else if (hc == c - 1 && vr == r) {
+                            cr = r; cc = c - 1;
+                        } else if (hc == c && vr == r - 1) {
+                            cr = r - 1; cc = c;
+                        } else if (hc == c - 1 && vr == r - 1) {
+                            cr = r - 1; cc = c - 1;
+                        }
+                        
+                        if (cr >= 0 && cr < rows && cc >= 0 && cc < cols) {
+                            int cellIdx = cr * cols + cc;
+                            int clue = clues[cellIdx];
+                            if (clue == 3) {
+                                if (!setEdgeState(e1, 1)) return false;
+                                if (!setEdgeState(e2, 1)) return false;
+                            } else if (clue == 1) {
+                                if (!setEdgeState(e1, -1)) return false;
+                                if (!setEdgeState(e2, -1)) return false;
+                            }
+                        }
+                    }
                 }
             } else {
                 if (lines != 0 && lines != 2) {
@@ -468,9 +553,9 @@ static inline bool deductIncremental() {
     return true;
 }
 
-// LOGICAL DEDUCTION ENGINE - FULL PASS (AC-3 constraint initialization)
 EMSCRIPTEN_KEEPALIVE
 bool deduct() {
+    dsuInitFromCurrent();
     clearQueues();
     
     // Seed queues with all cells and dots
@@ -733,25 +818,7 @@ int solve_puzzle_wasm(bool findSingle, int maxSteps) {
     memset(foundSolutions, 0, sizeof(foundSolutions));
 
     // Initialize DSU and seed it with initial active edges (if any)
-    dsuInit();
-    for (int i = 0; i < numEdges; i++) {
-        if (edgeStates[i] == 1) {
-            int dotA, dotB;
-            if (i < numH) {
-                int r = i / cols;
-                int c = i % cols;
-                dotA = r * (cols + 1) + c;
-                dotB = dotA + 1;
-            } else {
-                int vIdx = i - numH;
-                int r = vIdx / (cols + 1);
-                int c = vIdx % (cols + 1);
-                dotA = r * (cols + 1) + c;
-                dotB = dotA + (cols + 1);
-            }
-            dsuUnion(dotA, dotB);
-        }
-    }
+    dsuInitFromCurrent();
 
     backtrack(0, findSingle, maxSteps);
 
@@ -1272,20 +1339,22 @@ static int fastPathCount = 0;
 // Fast solver validation for minimization
 static bool checkSolvability(const char* difficulty) {
     solvabilityChecks++;
-    int maxSteps = strcmp(difficulty, "easy") == 0 ? 30 : 50;
-    int totalCells = rows * cols;
-    if (totalCells > 150) {
-        if (strcmp(difficulty, "easy") == 0) maxSteps = 60;
-        else if (strcmp(difficulty, "medium") == 0) maxSteps = 250;
-        else if (strcmp(difficulty, "hard") == 0) maxSteps = 600;
-        else if (strcmp(difficulty, "expert") == 0) maxSteps = 1500;
-        else maxSteps = 500;
+    int maxSteps = 0;
+    if (strcmp(difficulty, "easy") == 0) {
+        maxSteps = 0;
     } else {
-        if (strcmp(difficulty, "easy") == 0) maxSteps = 30;
-        else if (strcmp(difficulty, "medium") == 0) maxSteps = 200;
-        else if (strcmp(difficulty, "hard") == 0) maxSteps = 500;
-        else if (strcmp(difficulty, "expert") == 0) maxSteps = 1000;
-        else maxSteps = 300;
+        int totalCells = rows * cols;
+        if (totalCells > 150) {
+            if (strcmp(difficulty, "medium") == 0) maxSteps = 250;
+            else if (strcmp(difficulty, "hard") == 0) maxSteps = 600;
+            else if (strcmp(difficulty, "expert") == 0) maxSteps = 1500;
+            else maxSteps = 500;
+        } else {
+            if (strcmp(difficulty, "medium") == 0) maxSteps = 200;
+            else if (strcmp(difficulty, "hard") == 0) maxSteps = 500;
+            else if (strcmp(difficulty, "expert") == 0) maxSteps = 1000;
+            else maxSteps = 300;
+        }
     }
 
     // Backup current edgeStates before solving
@@ -1296,19 +1365,27 @@ static bool checkSolvability(const char* difficulty) {
     // If pure deduction determines all edges and satisfies all constraints,
     // the solution is unique, and we can skip backtracking completely!
     memset(edgeStates, 0, numEdges);
-    if (deduct() && isSolved()) {
-        bool allDecided = true;
-        for (int i = 0; i < numEdges; i++) {
-            if (edgeStates[i] == 0) {
-                allDecided = false;
-                break;
-            }
+    bool deductSuccess = deduct();
+    bool solvedSuccess = isSolved();
+    bool allDecided = true;
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] == 0) {
+            allDecided = false;
+            break;
         }
-        if (allDecided) {
-            fastPathCount++;
-            memcpy(edgeStates, origEdges, numEdges); // restore original
-            return true;
-        }
+    }
+    
+    // Print first few checks to avoid flooding output
+    static int debugPrintCount = 0;
+    if (debugPrintCount < 5) {
+        printf("Debug Solvability: deduct=%d, solved=%d, allDecided=%d\n", deductSuccess, solvedSuccess, allDecided);
+        debugPrintCount++;
+    }
+
+    if (deductSuccess && solvedSuccess && allDecided) {
+        fastPathCount++;
+        memcpy(edgeStates, origEdges, numEdges); // restore original
+        return true;
     }
 
     if (maxSteps == 0) {
@@ -1356,6 +1433,8 @@ void generate_puzzle_wasm(const char* difficulty) {
     // Store target loop and clues
     static int8_t targetEdgeStates[MAX_EDGES];
     memcpy(targetEdgeStates, edgeStates, numEdges);
+    memcpy(dbgTargetEdges, edgeStates, numEdges);
+    hasDbgTarget = true;
     memcpy(sortTargetClues, clues, rows * cols);
 
     // Create a list of cell indices
@@ -1377,8 +1456,8 @@ void generate_puzzle_wasm(const char* difficulty) {
     qsort(shuffledCells, totalCells, sizeof(int), compareCells);
 
     // Determine target remaining clues based on difficulty
-    double keepRatio = 0.45;
-    if (strcmp(difficulty, "medium") == 0) keepRatio = 0.32;
+    double keepRatio = 0.52;
+    if (strcmp(difficulty, "medium") == 0) keepRatio = 0.35;
     else if (strcmp(difficulty, "hard") == 0) keepRatio = 0.22;
     else if (strcmp(difficulty, "expert") == 0) keepRatio = 0.15;
 
@@ -1402,6 +1481,10 @@ void generate_puzzle_wasm(const char* difficulty) {
     fastPathCount = 0;
     printf("[C Generator] Starting minimization. Total cells: %d, Initial clues: %d, Target: %d\n", 
            totalCells, currentClueCount, targetKeepCount);
+    
+    // Check initial board solvability before any clue removal
+    bool initSolvable = checkSolvability(difficulty);
+    printf("Initial Board Solvability check: %d\n", initSolvable);
 
     for (int i = 0; i < finalRemainingCount; i++) {
         if (currentClueCount <= targetKeepCount) break;

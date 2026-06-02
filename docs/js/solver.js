@@ -48,6 +48,28 @@ class LoopCourseSolver {
     this.dsuHistory.length = 0;
   }
 
+  dsuInitFromCurrent() {
+    this.dsuInit();
+    for (let i = 0; i < this.numEdges; i++) {
+      if (this.edgeStates[i] === 1) {
+        let dotA, dotB;
+        if (i < this.numH) {
+          const r = Math.floor(i / this.cols);
+          const c = i % this.cols;
+          dotA = r * (this.cols + 1) + c;
+          dotB = dotA + 1;
+        } else {
+          const vIdx = i - this.numH;
+          const r = Math.floor(vIdx / (this.cols + 1));
+          const c = vIdx % (this.cols + 1);
+          dotA = r * (this.cols + 1) + c;
+          dotB = dotA + (this.cols + 1);
+        }
+        this.dsuUnion(dotA, dotB);
+      }
+    }
+  }
+
   dsuFind(i) {
     while (i !== this.dsuParent[i]) {
       i = this.dsuParent[i];
@@ -221,6 +243,7 @@ class LoopCourseSolver {
   // Run logical deduction rules repeatedly until no more progress is made
   // Returns false if a contradiction is found, true otherwise
   deduct() {
+    this.dsuInitFromCurrent();
     this.clearQueues();
     
     // Seed queues with all cells and dots
@@ -274,6 +297,8 @@ class LoopCourseSolver {
               }
             }
           }
+
+
         }
       }
       
@@ -306,6 +331,42 @@ class LoopCourseSolver {
             if (!this.setEdgeState(undecided[0], 1)) return false;
           } else if (lines === 0 && undecided.length === 1) {
             if (!this.setEdgeState(undecided[0], -1)) return false;
+          } else if (lines === 0 && undecided.length === 2) {
+            // Rule A: Generalized Corner Heuristic
+            const e1 = undecided[0];
+            const e2 = undecided[1];
+            const e1IsH = (e1 < this.numH);
+            const e2IsH = (e2 < this.numH);
+            if (e1IsH !== e2IsH) {
+              const hEdge = e1IsH ? e1 : e2;
+              const vEdge = e1IsH ? e2 : e1;
+              const hr = Math.floor(hEdge / this.cols);
+              const hc = hEdge % this.cols;
+              const vr = Math.floor((vEdge - this.numH) / (this.cols + 1));
+              const vc = (vEdge - this.numH) % (this.cols + 1);
+              
+              let cr = -1, cc = -1;
+              if (hc === c && vr === r) {
+                cr = r; cc = c;
+              } else if (hc === c - 1 && vr === r) {
+                cr = r; cc = c - 1;
+              } else if (hc === c && vr === r - 1) {
+                cr = r - 1; cc = c;
+              } else if (hc === c - 1 && vr === r - 1) {
+                cr = r - 1; cc = c - 1;
+              }
+              
+              if (cr >= 0 && cr < this.rows && cc >= 0 && cc < this.cols) {
+                const clue = this.clues[cr][cc];
+                if (clue === 3) {
+                  if (!this.setEdgeState(e1, 1)) return false;
+                  if (!this.setEdgeState(e2, 1)) return false;
+                } else if (clue === 1) {
+                  if (!this.setEdgeState(e1, -1)) return false;
+                  if (!this.setEdgeState(e2, -1)) return false;
+                }
+              }
+            }
           }
         } else {
           if (lines !== 0 && lines !== 2) {
@@ -522,25 +583,7 @@ class LoopCourseSolver {
     let steps = 0;
     let isTimeout = false;
     
-    this.dsuInit();
-    for (let i = 0; i < this.numEdges; i++) {
-      if (this.edgeStates[i] === 1) {
-        let dotA, dotB;
-        if (i < this.numH) {
-          const r = Math.floor(i / this.cols);
-          const c = i % this.cols;
-          dotA = r * (this.cols + 1) + c;
-          dotB = dotA + 1;
-        } else {
-          const vIdx = i - this.numH;
-          const r = Math.floor(vIdx / (this.cols + 1));
-          const c = vIdx % (this.cols + 1);
-          dotA = r * (this.cols + 1) + c;
-          dotB = dotA + (this.cols + 1);
-        }
-        this.dsuUnion(dotA, dotB);
-      }
-    }
+    this.dsuInitFromCurrent();
     
     const backtrack = (depth = 0) => {
       steps++;
