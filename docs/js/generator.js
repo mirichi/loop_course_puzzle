@@ -13,9 +13,17 @@ let wasmSolvePuzzleWasm = null;
 let wasmGetSolutionPtr = null;
 let wasmSetRandomSeed = null;
 
-// Asynchronously load the LoopCourse WebAssembly module
-if (typeof window.createLoopCourseModule === 'function') {
-  window.createLoopCourseModule().then(Module => {
+// Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
+if (typeof createLoopCourseModule === 'function') {
+  const wasmVersion = "20260602_v10";
+  createLoopCourseModule({
+    locateFile: function(path, prefix) {
+      if (path.endsWith('.wasm')) {
+        return prefix + path + "?v=" + wasmVersion;
+      }
+      return prefix + path;
+    }
+  }).then(Module => {
     wasmModule = Module;
     wasmInitGrid = Module.cwrap('init_grid', 'void', ['number', 'number']);
     wasmGetEdgeStatesPtr = Module.cwrap('get_edge_states_ptr', 'number', []);
@@ -25,11 +33,15 @@ if (typeof window.createLoopCourseModule === 'function') {
     wasmGetSolutionPtr = Module.cwrap('get_solution_ptr', 'number', ['number']);
     wasmSetRandomSeed = Module.cwrap('set_random_seed', 'void', ['number']);
     
-    console.log("LoopCourse WASM module loaded successfully!");
-    
-    const statusTextEl = document.getElementById('status-text');
-    if (statusTextEl && statusTextEl.textContent.includes('準備完了')) {
-      statusTextEl.textContent = '準備完了（WASM高速エンジン稼働中）！すべての数字を満たす1つのループを作ろう。';
+    console.log("LoopCourse WASM module loaded successfully with cache-buster!");
+    if (typeof window !== 'undefined') {
+      window.wasmReady = true;
+      const statusTextEl = document.getElementById('status-text');
+      if (statusTextEl && statusTextEl.textContent.includes('準備完了')) {
+        statusTextEl.textContent = '準備完了（WASM高速エンジン稼働中）！すべての数字を満たす1つのループを作ろう。';
+      }
+    } else {
+      self.wasmReady = true;
     }
   }).catch(err => {
     console.error("Failed to load WASM module:", err);
@@ -137,6 +149,21 @@ class LoopCourseGenerator {
       }
       
       return reachedCount === outsideCount;
+    };
+
+    const hasDiagonalCheckerboard = (tempCells) => {
+      for (let r = 0; r < this.rows - 1; r++) {
+        for (let c = 0; c < this.cols - 1; c++) {
+          const tl = tempCells[r][c];
+          const tr = tempCells[r][c + 1];
+          const bl = tempCells[r + 1][c];
+          const br = tempCells[r + 1][c + 1];
+          if (tl === br && tr === bl && tl !== tr) {
+            return true;
+          }
+        }
+      }
+      return false;
     };
 
     let attempts = 0;
@@ -248,7 +275,32 @@ class LoopCourseGenerator {
                 return false;
               };
               
-              if (insideNeighbors > 0 && insideNeighbors < 4 && !wouldForm4x4Inside()) {
+              const wouldFormCheckerboard = () => {
+                const diagonalsR = [-1, -1, 1, 1];
+                const diagonalsC = [-1, 1, -1, 1];
+                const adjR1 = [-1, -1, 1, 1];
+                const adjC1 = [0, 0, 0, 0];
+                const adjR2 = [0, 0, 0, 0];
+                const adjC2 = [-1, 1, -1, 1];
+                for (let i = 0; i < 4; i++) {
+                  const nrDiag = r + diagonalsR[i];
+                  const ncDiag = c + diagonalsC[i];
+                  if (nrDiag >= 0 && nrDiag < this.rows && ncDiag >= 0 && ncDiag < this.cols) {
+                    if (cells[nrDiag][ncDiag] === 1) {
+                      const ar1 = r + adjR1[i];
+                      const ac1 = c + adjC1[i];
+                      const ar2 = r + adjR2[i];
+                      const ac2 = c + adjC2[i];
+                      if (cells[ar1][ac1] === 0 && cells[ar2][ac2] === 0) {
+                        return true;
+                      }
+                    }
+                  }
+                }
+                return false;
+              };
+              
+              if (insideNeighbors > 0 && insideNeighbors < 4 && !wouldForm4x4Inside() && !wouldFormCheckerboard()) {
                 const neighborScore = (insideNeighbors === 1) ? 8.0 : ((insideNeighbors === 2) ? 5.0 : 1.0);
                 
                 const dist = Math.sqrt(Math.pow(r - avgR, 2) + Math.pow(c - avgC, 2));
@@ -419,7 +471,7 @@ class LoopCourseGenerator {
       
       finalCells = cells;
       const minAcceptableInsideCount = Math.floor(targetInsideCount * 0.9);
-      if (insideCount >= minAcceptableInsideCount && checkSectorCoverage(cells)) {
+      if (insideCount >= minAcceptableInsideCount && checkSectorCoverage(cells) && !hasDiagonalCheckerboard(cells)) {
         break; // Success! We satisfy both fill coverage and sector check
       }
     }
@@ -534,7 +586,8 @@ class LoopCourseGenerator {
       
       return {
         clues,
-        solution
+        solution,
+        engineUsed: "WASM"
       };
     }
 
@@ -561,13 +614,21 @@ class LoopCourseGenerator {
       [cellCoords[i], cellCoords[j]] = [cellCoords[j], cellCoords[i]];
     }
     
-    // Sort cell coordinates to prioritize hiding 0s and keeping 3s:
-    // 0s first (try to hide first, making them disappear)
-    // 1s and 2s next
-    // 3s last (try to hide last, making them stay on the board)
+    // Sort cell coordinates by Block ID first (spatial partitioning), then by clue priority:
     cellCoords.sort((a, b) => {
-      const clueA = originalClues[a[0]][a[1]];
-      const clueB = originalClues[b[0]][b[1]];
+      const [rA, cA] = a;
+      const [rB, cB] = b;
+      
+      const blockSI = 8;
+      const blockIdA = Math.floor(rA / blockSI) * 100 + Math.floor(cA / blockSI);
+      const blockIdB = Math.floor(rB / blockSI) * 100 + Math.floor(cB / blockSI);
+      
+      if (blockIdA !== blockIdB) {
+        return blockIdA - blockIdB;
+      }
+      
+      const clueA = originalClues[rA][cA];
+      const clueB = originalClues[rB][cB];
       
       const getPriority = (clue) => {
         if (clue === 0) return 0; // Hide first!
@@ -589,115 +650,53 @@ class LoopCourseGenerator {
     
     const isLargeBoard = this.rows * this.cols > 150;
     
+    let debugTimeoutCount = 0;
+    let debugContradictionCount = 0;
+    
     // Fast logical solvability checker
     const checkSolvability = () => {
-      const solver = new window.LoopCourseSolver(this.rows, this.cols, clues);
+      const solver = new LoopCourseSolver(this.rows, this.cols, clues);
+      solver.strict = true;
       
       const totalCells = this.rows * this.cols;
-      let maxSteps = (difficulty === 'easy') ? 0 : 50; 
+      let maxSteps = 50; 
       if (totalCells > 150) {
-        if (difficulty === 'easy') maxSteps = 0;
-        else if (difficulty === 'medium') maxSteps = 2;
-        else if (difficulty === 'hard') maxSteps = 8;
-        else if (difficulty === 'expert') maxSteps = 12;
-        else maxSteps = 8;
+        if (difficulty === 'easy') maxSteps = 60;
+        else if (difficulty === 'medium') maxSteps = 250;
+        else if (difficulty === 'hard') maxSteps = 600;
+        else if (difficulty === 'expert') maxSteps = 1500;
+        else maxSteps = 500;
+      } else {
+        if (difficulty === 'easy') maxSteps = 30;
+        else if (difficulty === 'medium') maxSteps = 200;
+        else if (difficulty === 'hard') maxSteps = 500;
+        else if (difficulty === 'expert') maxSteps = 1000;
+        else maxSteps = 300;
       }
       
       if (maxSteps === 0) {
         // Pure deduction check
-        const success = solver.deduct();
-        return success && solver.isSolved();
+        const success = solver.deduct() && solver.isSolved(true);
+        if (!success) debugContradictionCount++;
+        return success;
       }
       
       // Use solver's pre-allocated fast backtracking engine
       const solutions = solver.solve(false, maxSteps);
       
-      return solutions.length === 1 && solutions[0] !== "timeout";
+      const isTimeout = solutions.length > 0 && solutions[0] === "timeout";
+      const isUnique = solutions.length === 1 && !isTimeout;
+      
+      if (isTimeout) {
+        debugTimeoutCount++;
+      } else if (!isUnique) {
+        debugContradictionCount++;
+      }
+      
+      return isUnique;
     };
 
-    // Pass 1: Large Chunks (size 20 for large boards, size 8 for medium boards)
-    if (isLargeBoard) {
-      const chunkSize1 = 20;
-      for (let i = 0; i < cellCoords.length; i += chunkSize1) {
-        if (currentClueCount <= targetKeepCount) break;
-        
-        const chunk = [];
-        const originalVals = [];
-        
-        for (let j = 0; j < chunkSize1 && (i + j) < cellCoords.length; j++) {
-          const [r, c] = cellCoords[i + j];
-          const val = clues[r][c];
-          if (val !== null) {
-            if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
-              continue;
-            }
-            chunk.push([r, c]);
-            originalVals.push(val);
-          }
-        }
-        
-        if (chunk.length === 0) continue;
-        if (currentClueCount - chunk.length < targetKeepCount) {
-          // If clearing this entire chunk goes below the target, we don't clear all at once.
-          // Let subsequent passes handle it with smaller chunks or individual cells.
-          continue;
-        }
-        
-        // Temporarily remove all clues in this chunk
-        for (const [r, c] of chunk) {
-          clues[r][c] = null;
-        }
-        
-        if (checkSolvability()) {
-          currentClueCount -= chunk.length;
-        } else {
-          // Restore clues
-          for (let k = 0; k < chunk.length; k++) {
-            const [r, c] = chunk[k];
-            clues[r][c] = originalVals[k];
-          }
-        }
-      }
-    } else if (this.rows * this.cols > 60) {
-      // Medium boards (e.g. 10x10) can benefit from a smaller large-chunk pass (size 8)
-      const chunkSize1 = 8;
-      for (let i = 0; i < cellCoords.length; i += chunkSize1) {
-        if (currentClueCount <= targetKeepCount) break;
-        
-        const chunk = [];
-        const originalVals = [];
-        
-        for (let j = 0; j < chunkSize1 && (i + j) < cellCoords.length; j++) {
-          const [r, c] = cellCoords[i + j];
-          const val = clues[r][c];
-          if (val !== null) {
-            if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
-              continue;
-            }
-            chunk.push([r, c]);
-            originalVals.push(val);
-          }
-        }
-        
-        if (chunk.length === 0) continue;
-        if (currentClueCount - chunk.length < targetKeepCount) continue;
-        
-        for (const [r, c] of chunk) {
-          clues[r][c] = null;
-        }
-        
-        if (checkSolvability()) {
-          currentClueCount -= chunk.length;
-        } else {
-          for (let k = 0; k < chunk.length; k++) {
-            const [r, c] = chunk[k];
-            clues[r][c] = originalVals[k];
-          }
-        }
-      }
-    }
-
-    // Pass 2: Small Chunks (size 5 for large/medium boards, size 3 for small boards)
+    // Pass 3: Individual Fine-tuning (size 1)
     const remainingCoordsAfterPass1 = [];
     for (const [r, c] of cellCoords) {
       if (clues[r][c] !== null) {
@@ -705,74 +704,40 @@ class LoopCourseGenerator {
       }
     }
     
-    const chunkSize2 = isLargeBoard ? 5 : (this.rows * this.cols > 60 ? 3 : 2);
-    for (let i = 0; i < remainingCoordsAfterPass1.length; i += chunkSize2) {
+    for (let i = 0; i < remainingCoordsAfterPass1.length; i++) {
       if (currentClueCount <= targetKeepCount) break;
       
-      const chunk = [];
-      const originalVals = [];
+      const [r, c] = remainingCoordsAfterPass1[i];
+      const val = clues[r][c];
+      if (val === null) continue;
       
-      for (let j = 0; j < chunkSize2 && (i + j) < remainingCoordsAfterPass1.length; j++) {
-        const [r, c] = remainingCoordsAfterPass1[i + j];
-        const val = clues[r][c];
-        if (val !== null) {
-          if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
-            continue;
-          }
-          chunk.push([r, c]);
-          originalVals.push(val);
-        }
-      }
-      
-      if (chunk.length === 0) continue;
-      if (currentClueCount - chunk.length < targetKeepCount) continue;
-      
-      for (const [r, c] of chunk) {
-        clues[r][c] = null;
-      }
-      
-      if (checkSolvability()) {
-        currentClueCount -= chunk.length;
-      } else {
-        for (let k = 0; k < chunk.length; k++) {
-          const [r, c] = chunk[k];
-          clues[r][c] = originalVals[k];
-        }
-      }
-    }
-
-    // Pass 3: Individual Fine-tuning (size 1)
-    // Run individual sweeps on whatever is left to prune any remaining redundant clues
-    const remainingCoordsAfterPass2 = [];
-    for (const [r, c] of cellCoords) {
-      if (clues[r][c] !== null) {
-        remainingCoordsAfterPass2.push([r, c]);
-      }
-    }
-    
-    for (const [r, c] of remainingCoordsAfterPass2) {
-      if (currentClueCount <= targetKeepCount) break;
-      
-      const originalClue = clues[r][c];
-      if (difficulty === 'easy' && originalClue === 3 && Math.random() < 0.8) {
+      if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
         continue;
       }
       
+      // Try removing this clue
       clues[r][c] = null;
       currentClueCount--;
       
       if (!checkSolvability()) {
-        clues[r][c] = originalClue;
+        clues[r][c] = val;
         currentClueCount++;
       }
     }
     
     return {
       clues,
-      solution: loopEdges
+      solution: loopEdges,
+      engineUsed: "JS"
     };
   }
 }
 
-// Bind to window for local file protocol compatibility without modules
-window.LoopCourseGenerator = LoopCourseGenerator;
+// Bind to global scope for Web Worker and local compatibility
+if (typeof self !== 'undefined') {
+  self.LoopCourseGenerator = LoopCourseGenerator;
+} else if (typeof window !== 'undefined') {
+  window.LoopCourseGenerator = LoopCourseGenerator;
+} else {
+  globalThis.LoopCourseGenerator = LoopCourseGenerator;
+}

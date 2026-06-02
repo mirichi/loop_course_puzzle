@@ -92,8 +92,6 @@ body {
 /* Glassmorphism Panels */
 .control-panel, .board-area {
   background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 24px;
@@ -303,7 +301,6 @@ select:focus {
 }
 .cell-clue-group.clue-satisfied .clue-text {
   fill: var(--neon-green);
-  filter: drop-shadow(0 0 2px rgba(16, 185, 129, 0.3));
 }
 
 .cell-clue-group.clue-error .cell-bg {
@@ -311,7 +308,6 @@ select:focus {
 }
 .cell-clue-group.clue-error .clue-text {
   fill: var(--neon-red);
-  filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.4));
 }
 
 /* Grid Lines (Edges) */
@@ -340,7 +336,6 @@ select:focus {
 .edge-group.state-line .grid-line {
   stroke: var(--neon-cyan);
   stroke-width: 4.5;
-  filter: drop-shadow(0 0 3px rgba(0, 242, 254, 0.6));
 }
 
 /* Cross Marks */
@@ -437,7 +432,6 @@ select:focus {
   width: 100vw;
   height: 100vh;
   background: rgba(5, 8, 15, 0.85);
-  backdrop-filter: blur(10px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -673,4 +667,31 @@ select:focus {
   .modal-content h2 {
     font-size: 1.5rem;
   }
+}
+
+/* Engine indicator badge in status bar */
+.engine-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin: 0 4px;
+  border: 1px solid transparent;
+}
+
+.wasm-engine {
+  background: rgba(0, 242, 254, 0.1);
+  color: var(--neon-cyan);
+  border-color: rgba(0, 242, 254, 0.3);
+  box-shadow: 0 0 8px rgba(0, 242, 254, 0.2);
+}
+
+.js-engine {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--neon-amber);
+  border-color: rgba(245, 158, 11, 0.3);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.2);
 }

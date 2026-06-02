@@ -152,33 +152,104 @@ class LoopCourseGame {
     this.difficulty = document.getElementById('select-difficulty').value;
     
     // Show generating status
-    this.statusTextEl.textContent = 'パズル作成中...';
+    this.statusTextEl.textContent = 'パズル作成中... (マルチスレッド実行中 ⚡)';
     this.statusTextEl.classList.add('loading');
     
-    // Use setTimeout so the DOM updates and shows "generating" before freezing for calculations
+    // Terminate existing worker if still running to prevent resource leaks
+    if (this.generatorWorker) {
+      this.generatorWorker.terminate();
+    }
+    
+    try {
+      // Instantiate background Worker with timestamp to bypass caching
+      this.generatorWorker = new Worker(`js/generator.worker.js?v=${Date.now()}`);
+      
+      this.generatorWorker.onmessage = (e) => {
+        const data = e.data;
+        if (!data.success) {
+          console.error("Worker puzzle generation failed:", data.error);
+          this.statusTextEl.textContent = 'エラー：パズル生成に失敗しました。';
+          this.statusTextEl.classList.remove('loading');
+          return;
+        }
+        
+        this.clues = data.clues;
+        this.solution = data.solution;
+        
+        this.numH = (this.rows + 1) * this.cols;
+        this.numV = this.rows * (this.cols + 1);
+        this.numEdges = this.numH + this.numV;
+        
+        this.edgeStates = new Int8Array(this.numEdges);
+        this.undoStack = [];
+        this.redoStack = [];
+        this.currentDragGroup = [];
+        
+        this.updateUndoRedoButtons();
+        this.renderBoard();
+        this.startTimer();
+        
+        if (data.engineUsed === "WASM") {
+          this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
+        } else {
+          this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator js-engine">JS互換エンジン ☕</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
+        }
+        this.statusTextEl.classList.remove('loading');
+        
+        // Cleanup Worker resources
+        this.generatorWorker.terminate();
+        this.generatorWorker = null;
+      };
+      
+      // Trigger background thread puzzle generation
+      this.generatorWorker.postMessage({
+        rows: this.rows,
+        cols: this.cols,
+        difficulty: this.difficulty
+      });
+    } catch (err) {
+      console.warn("Web Worker creation failed (possibly running on local file:// or browser restriction). Falling back to main-thread:", err);
+      this.generateOnMainThread();
+    }
+  }
+
+  generateOnMainThread() {
+    this.statusTextEl.textContent = 'パズル作成中... (メインスレッドで実行中 ⚡)';
+    this.statusTextEl.classList.add('loading');
+    
+    // Small timeout to allow the browser UI to render the "パズル作成中" message
     setTimeout(() => {
-      // Reference global LoopCourseGenerator
-      const generator = new window.LoopCourseGenerator(this.rows, this.cols);
-      const puzzle = generator.generate(this.difficulty);
-      
-      this.clues = puzzle.clues;
-      this.solution = puzzle.solution;
-      
-      this.numH = (this.rows + 1) * this.cols;
-      this.numV = this.rows * (this.cols + 1);
-      this.numEdges = this.numH + this.numV;
-      
-      this.edgeStates = new Int8Array(this.numEdges);
-      this.undoStack = [];
-      this.redoStack = [];
-      this.currentDragGroup = [];
-      
-      this.updateUndoRedoButtons();
-      this.renderBoard();
-      this.startTimer();
-      
-      this.statusTextEl.textContent = '準備完了！すべての数字を満たす1つのループを作ろう。';
-      this.statusTextEl.classList.remove('loading');
+      try {
+        const generator = new LoopCourseGenerator(this.rows, this.cols);
+        const puzzle = generator.generate(this.difficulty);
+        
+        this.clues = puzzle.clues;
+        this.solution = puzzle.solution;
+        
+        this.numH = (this.rows + 1) * this.cols;
+        this.numV = this.rows * (this.cols + 1);
+        this.numEdges = this.numH + this.numV;
+        
+        this.edgeStates = new Int8Array(this.numEdges);
+        this.undoStack = [];
+        this.redoStack = [];
+        this.currentDragGroup = [];
+        
+        this.updateUndoRedoButtons();
+        this.renderBoard();
+        this.startTimer();
+        
+        if (puzzle.engineUsed === "WASM") {
+          this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で生成完了）！すべての数字を満たす1つのループを作ろう。';
+        } else {
+          this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator js-engine">JS互換エンジン ☕</span>で生成完了）！すべての数字を満たす1つのループを作ろう。';
+        }
+        this.statusTextEl.classList.remove('loading');
+      } catch (err) {
+        console.error("Main-thread puzzle generation failed:", err);
+        this.statusTextEl.textContent = 'エラー：パズル生成に失敗しました。';
+        this.statusTextEl.classList.remove('loading');
+      }
     }, 50);
   }
 
