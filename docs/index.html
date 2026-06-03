@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260602_v11">
+  <link rel="stylesheet" href="style.css?v=20260603_v16">
 </head>
 <body>
   <div class="app-container">
@@ -129,6 +129,13 @@
               </svg>
               <span>進む</span>
             </button>
+            <button id="btn-check" class="action-btn ripple" title="間違いチェック (誤った線を赤く点滅させる)">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>チェック</span>
+            </button>
             <button id="btn-hint" class="action-btn ripple" title="ヒント (1手自動で埋める)">
               <svg viewBox="0 0 24 24" width="20" height="20">
                 <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-1.3l-.85-.6C7.8 13.1 7 11.1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 2.1-.8 4.1-2.15 5.1z" fill="currentColor"/>
@@ -166,9 +173,9 @@
   </div>
 
   <!-- Load JavaScript files sequentially for local file:// protocol compatibility -->
-  <script src="js/loopcourse.js?v=20260602_v11"></script>
-  <script src="js/solver.js?v=20260602_v11"></script>
-  <script src="js/generator.js?v=20260602_v11"></script>
-  <script src="js/game.js?v=20260602_v11"></script>
+  <script src="js/loopcourse.js?v=20260603_v16"></script>
+  <script src="js/solver.js?v=20260603_v16"></script>
+  <script src="js/generator.js?v=20260603_v16"></script>
+  <script src="js/game.js?v=20260603_v16"></script>
 </body>
 </html>

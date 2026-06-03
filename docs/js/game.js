@@ -90,6 +90,7 @@ class LoopCourseGame {
     // Undo / Redo
     this.undoBtn.addEventListener('click', () => this.undo());
     this.redoBtn.addEventListener('click', () => this.redo());
+    document.getElementById('btn-check').addEventListener('click', () => this.checkMistakes());
     document.getElementById('btn-hint').addEventListener('click', () => this.giveHint());
     document.getElementById('btn-reset').addEventListener('click', () => this.resetBoard());
     
@@ -390,10 +391,6 @@ class LoopCourseGame {
         if (this.isTouchMode) return; // Ignore on touch screens to allow default scroll/zoom
         this.handleEdgeDragEnter(edgeIdx, e.clientX, e.clientY);
       });
-      hitbox.addEventListener('click', (e) => {
-        if (!this.isTouchMode) return; // Only cycle states on touch devices
-        this.handleEdgeClickTouch(edgeIdx);
-      });
       // Block right click context menu on the grid
       hitbox.addEventListener('contextmenu', (e) => e.preventDefault());
       
@@ -527,14 +524,30 @@ class LoopCourseGame {
     const currentState = this.edgeStates[edgeIdx];
     let newState = 0;
     
-    // Cycle: Empty (0) -> Line (1) -> Cross (-1) -> Empty (0)
-    if (currentState === 0) {
-      newState = 1;
-    } else if (currentState === 1) {
-      newState = -1;
-    } else {
+    if (this.activeTool === 'cross') {
+      // Cycle: Empty (0) -> Cross (-1) -> Line (1) -> Empty (0)
+      if (currentState === 0) {
+        newState = -1;
+      } else if (currentState === -1) {
+        newState = 1;
+      } else {
+        newState = 0;
+      }
+    } else if (this.activeTool === 'eraser') {
+      // Cycle: Any -> Empty (0)
       newState = 0;
+    } else {
+      // Cycle: Empty (0) -> Line (1) -> Cross (-1) -> Empty (0)
+      if (currentState === 0) {
+        newState = 1;
+      } else if (currentState === 1) {
+        newState = -1;
+      } else {
+        newState = 0;
+      }
     }
+    
+    if (currentState === newState) return; // No change
     
     this.applyEdgeStateChange(edgeIdx, newState);
     
@@ -903,9 +916,59 @@ class LoopCourseGame {
       }
     }
 
-    // 4. If we found an undecided correct line, reveal it as a solid line and pulse it in gold
+    // 4. If we found undecided correct lines, prioritize those connected to already drawn lines
     if (correctUndecidedLines.length > 0) {
-      const hintIdx = correctUndecidedLines[Math.floor(Math.random() * correctUndecidedLines.length)];
+      // Find all dots that touch currently drawn lines (state === 1)
+      const activeDots = new Set();
+      for (let i = 0; i < this.numEdges; i++) {
+        if (this.edgeStates[i] === 1) {
+          let dotA, dotB;
+          if (i < this.numH) {
+            const r = Math.floor(i / this.cols);
+            const c = i % this.cols;
+            dotA = r * (this.cols + 1) + c;
+            dotB = dotA + 1;
+          } else {
+            const vIdx = i - this.numH;
+            const r = Math.floor(vIdx / (this.cols + 1));
+            const c = vIdx % (this.cols + 1);
+            dotA = r * (this.cols + 1) + c;
+            dotB = dotA + (this.cols + 1);
+          }
+          activeDots.add(dotA);
+          activeDots.add(dotB);
+        }
+      }
+
+      // Filter correct undecided lines that connect to these active dots
+      let candidateLines = correctUndecidedLines;
+      if (activeDots.size > 0) {
+        const connectedLines = [];
+        for (const idx of correctUndecidedLines) {
+          let dotA, dotB;
+          if (idx < this.numH) {
+            const r = Math.floor(idx / this.cols);
+            const c = idx % this.cols;
+            dotA = r * (this.cols + 1) + c;
+            dotB = dotA + 1;
+          } else {
+            const vIdx = idx - this.numH;
+            const r = Math.floor(vIdx / (this.cols + 1));
+            const c = vIdx % (this.cols + 1);
+            dotA = r * (this.cols + 1) + c;
+            dotB = dotA + (this.cols + 1);
+          }
+          if (activeDots.has(dotA) || activeDots.has(dotB)) {
+            connectedLines.push(idx);
+          }
+        }
+        if (connectedLines.length > 0) {
+          candidateLines = connectedLines;
+        }
+      }
+
+      // Pick a random line from the prioritized candidates
+      const hintIdx = candidateLines[Math.floor(Math.random() * candidateLines.length)];
       const oldState = 0;
       const newState = 1;
 
@@ -932,6 +995,40 @@ class LoopCourseGame {
     } else {
       // 5. If there are no mistakes and no correct lines left to draw (the loop is fully complete)
       this.statusTextEl.textContent = '💡 すべての正しい線がすでに引かれています！クリア状態です！';
+    }
+  }
+
+  checkMistakes() {
+    if (this.gameCompleted || this.isPaused) return;
+
+    // 1. Check if there are any incorrectly placed edges (mistakes)
+    const mistakes = [];
+    for (let i = 0; i < this.numEdges; i++) {
+      if (this.edgeStates[i] !== 0 && this.edgeStates[i] !== this.solution[i]) {
+        mistakes.push(i);
+      }
+    }
+
+    // 2. If there are mistakes, highlight them in red
+    if (mistakes.length > 0) {
+      mistakes.forEach(idx => {
+        const edgeGroup = this.edgeElements ? this.edgeElements[idx] : this.svg.querySelector(`.edge-${idx}`);
+        if (edgeGroup) {
+          edgeGroup.classList.add('error-pulse');
+          setTimeout(() => {
+            edgeGroup.classList.remove('error-pulse');
+          }, 1600);
+        }
+      });
+      this.statusTextEl.textContent = `❌ 間違いが ${mistakes.length} 箇所あります（赤く点滅している線）。`;
+    } else {
+      // Find if player has drawn any lines at all
+      const hasLines = Array.from(this.edgeStates).some(state => state !== 0);
+      if (hasLines) {
+        this.statusTextEl.textContent = '✅ 現在の線に間違いはありません！素晴らしい！';
+      } else {
+        this.statusTextEl.textContent = '✅ 盤面は空です。線を引き始めてみましょう。';
+      }
     }
   }
 

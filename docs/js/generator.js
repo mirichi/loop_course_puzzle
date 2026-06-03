@@ -15,7 +15,7 @@ let wasmSetRandomSeed = null;
 
 // Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
 if (typeof createLoopCourseModule === 'function') {
-  const wasmVersion = "20260602_v11";
+  const wasmVersion = "20260603_v15";
   createLoopCourseModule({
     locateFile: function(path, prefix) {
       if (path.endsWith('.wasm')) {
@@ -641,7 +641,7 @@ class LoopCourseGenerator {
     
     // Adjust target parameters based on difficulty
     let keepRatio = 0.52; // Default for easy
-    if (difficulty === 'medium') keepRatio = 0.35;
+    if (difficulty === 'medium') keepRatio = 0.42;
     if (difficulty === 'hard') keepRatio = 0.22;
     if (difficulty === 'expert') keepRatio = 0.15; // Expert: 15% remaining clues
     
@@ -664,12 +664,12 @@ class LoopCourseGenerator {
         maxSteps = 0;
       } else {
         if (totalCells > 150) {
-          if (difficulty === 'medium') maxSteps = 250;
+          if (difficulty === 'medium') maxSteps = 25;
           else if (difficulty === 'hard') maxSteps = 600;
           else if (difficulty === 'expert') maxSteps = 1500;
           else maxSteps = 500;
         } else {
-          if (difficulty === 'medium') maxSteps = 200;
+          if (difficulty === 'medium') maxSteps = 12;
           else if (difficulty === 'hard') maxSteps = 500;
           else if (difficulty === 'expert') maxSteps = 1000;
           else maxSteps = 300;
