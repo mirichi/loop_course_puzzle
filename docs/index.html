@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260603_v16">
+  <link rel="stylesheet" href="style.css?v=20260607_v21">
 </head>
 <body>
   <div class="app-container">
@@ -136,6 +136,12 @@
               </svg>
               <span>チェック</span>
             </button>
+            <button id="btn-autocolor" class="action-btn ripple" title="自動色塗り (ループの内側を青く塗る)">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.21-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8s1.5.67 1.5 1.5S7.33 11 6.5 11zm3-3C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3.5 3c-.83 0-1.5-.67-1.5-1.5S17.17 8 18 8s1.5.67 1.5 1.5S18.83 11 18 11z" fill="currentColor"/>
+              </svg>
+              <span>色塗り</span>
+            </button>
             <button id="btn-hint" class="action-btn ripple" title="ヒント (1手自動で埋める)">
               <svg viewBox="0 0 24 24" width="20" height="20">
                 <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-1.3l-.85-.6C7.8 13.1 7 11.1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 2.1-.8 4.1-2.15 5.1z" fill="currentColor"/>
@@ -173,9 +179,9 @@
   </div>
 
   <!-- Load JavaScript files sequentially for local file:// protocol compatibility -->
-  <script src="js/loopcourse.js?v=20260603_v16"></script>
-  <script src="js/solver.js?v=20260603_v16"></script>
-  <script src="js/generator.js?v=20260603_v16"></script>
-  <script src="js/game.js?v=20260603_v16"></script>
+  <script src="js/loopcourse.js?v=20260607_v21"></script>
+  <script src="js/solver.js?v=20260607_v21"></script>
+  <script src="js/generator.js?v=20260607_v21"></script>
+  <script src="js/game.js?v=20260607_v21"></script>
 </body>
 </html>

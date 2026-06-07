@@ -303,6 +303,13 @@ select:focus {
   fill: var(--neon-green);
 }
 
+.cell-clue-group.bg-color-a .cell-bg {
+  fill: rgba(0, 150, 255, 0.22);
+}
+.cell-clue-group.bg-color-b .cell-bg {
+  fill: rgba(239, 68, 68, 0.22);
+}
+
 .cell-clue-group.clue-error .cell-bg {
   fill: rgba(239, 68, 68, 0.08);
 }
@@ -405,11 +412,11 @@ select:focus {
   transform: translateY(-1px);
 }
 
-.tool-btn.active {
-  background: rgba(0, 242, 254, 0.1);
-  border-color: var(--neon-cyan);
-  color: var(--neon-cyan);
-  box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+.tool-btn.active, .action-btn.active {
+  background: rgba(0, 242, 254, 0.1) !important;
+  border-color: var(--neon-cyan) !important;
+  color: var(--neon-cyan) !important;
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.15) !important;
 }
 
 .action-btn:disabled {
