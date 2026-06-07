@@ -24,6 +24,7 @@ class LoopCourseGame {
     this.isPaused = false;
     this.gameCompleted = false;
     this.isTouchMode = false;
+    this.autoColorEnabled = false;
     
     // Layout parameters
     this.spacing = 54; // Distance between dots in px
@@ -91,6 +92,18 @@ class LoopCourseGame {
     this.undoBtn.addEventListener('click', () => this.undo());
     this.redoBtn.addEventListener('click', () => this.redo());
     document.getElementById('btn-check').addEventListener('click', () => this.checkMistakes());
+    const autoColorBtn = document.getElementById('btn-autocolor');
+    if (autoColorBtn) {
+      autoColorBtn.addEventListener('click', () => {
+        this.autoColorEnabled = !this.autoColorEnabled;
+        if (this.autoColorEnabled) {
+          autoColorBtn.classList.add('active');
+        } else {
+          autoColorBtn.classList.remove('active');
+        }
+        this.computeAutoColoring();
+      });
+    }
     document.getElementById('btn-hint').addEventListener('click', () => this.giveHint());
     document.getElementById('btn-reset').addEventListener('click', () => this.resetBoard());
     
@@ -182,6 +195,7 @@ class LoopCourseGame {
         this.numEdges = this.numH + this.numV;
         
         this.edgeStates = new Int8Array(this.numEdges);
+        this.cellStates = new Int8Array(this.rows * this.cols);
         this.undoStack = [];
         this.redoStack = [];
         this.currentDragGroup = [];
@@ -189,6 +203,7 @@ class LoopCourseGame {
         this.updateUndoRedoButtons();
         this.renderBoard();
         this.startTimer();
+        this.computeAutoColoring();
         
         if (data.engineUsed === "WASM") {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
@@ -232,6 +247,7 @@ class LoopCourseGame {
         this.numEdges = this.numH + this.numV;
         
         this.edgeStates = new Int8Array(this.numEdges);
+        this.cellStates = new Int8Array(this.rows * this.cols);
         this.undoStack = [];
         this.redoStack = [];
         this.currentDragGroup = [];
@@ -239,6 +255,7 @@ class LoopCourseGame {
         this.updateUndoRedoButtons();
         this.renderBoard();
         this.startTimer();
+        this.computeAutoColoring();
         
         if (puzzle.engineUsed === "WASM") {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で生成完了）！すべての数字を満たす1つのループを作ろう。';
@@ -267,20 +284,19 @@ class LoopCourseGame {
     this.svg.setAttribute('height', svgHeight);
     this.svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
     
-    // 1. Draw cell clues (numbers 0-3)
+    // 1. Draw cell elements (backgrounds for all cells, clues where present)
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const clue = this.clues[r][c];
-        if (clue === null) continue;
         
         const cx = c * this.spacing + this.padding + this.spacing / 2;
         const cy = r * this.spacing + this.padding + this.spacing / 2;
         
-        // Group for numbers
+        // Group for cell
         const cellGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         cellGroup.setAttribute('class', `cell-clue-group cell-${r}-${c}`);
         
-        // Background subtle rect to show completed state
+        // Background subtle rect to show completed state or color marking
         const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         bg.setAttribute('x', c * this.spacing + this.padding + 2);
         bg.setAttribute('y', r * this.spacing + this.padding + 2);
@@ -290,15 +306,17 @@ class LoopCourseGame {
         bg.setAttribute('class', 'cell-bg');
         cellGroup.appendChild(bg);
         
-        // Clue text
-        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        txt.setAttribute('x', cx);
-        txt.setAttribute('y', cy + 6); // visual vertical alignment centering
-        txt.setAttribute('text-anchor', 'middle');
-        txt.setAttribute('class', 'clue-text');
-        txt.textContent = clue;
+        // Clue text (only if clue is not null)
+        if (clue !== null) {
+          const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          txt.setAttribute('x', cx);
+          txt.setAttribute('y', cy + 6); // visual vertical alignment centering
+          txt.setAttribute('text-anchor', 'middle');
+          txt.setAttribute('class', 'clue-text');
+          txt.textContent = clue;
+          cellGroup.appendChild(txt);
+        }
         
-        cellGroup.appendChild(txt);
         this.svg.appendChild(cellGroup);
         
         // Store cellGroup in cache
@@ -487,6 +505,143 @@ class LoopCourseGame {
       for (let c = 0; c < this.cols; c++) {
         this.updateSingleClueHighlight(r, c);
       }
+    }
+  }
+
+  computeAutoColoring() {
+    if (!this.cellStates) return;
+    
+    // cellStates を初期化（0 = 外側/未着色、1 = 内側/青）
+    this.cellStates.fill(0);
+    
+    if (!this.autoColorEnabled) {
+      // 自動色塗りが無効の場合は、すべてのセルの表示をクリアして終了
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          this.updateCellUI(r, c);
+        }
+      }
+      return;
+    }
+
+    const numCells = this.rows * this.cols;
+    const OUTSIDE = numCells;
+    
+    // cellColors 配列。-1 = 未確定, 0 = 外側, 1 = 内側
+    const cellColors = new Int8Array(numCells + 1);
+    cellColors.fill(-1);
+    cellColors[OUTSIDE] = 0; // 外側領域は常に「外側 (0)」
+
+    const queue = [OUTSIDE];
+    let head = 0;
+
+    while (head < queue.length) {
+      const curr = queue[head++];
+      const currColor = cellColors[curr];
+
+      if (curr === OUTSIDE) {
+        // 外周セルへの伝播
+        // 1. 上端 (r = 0)
+        for (let c = 0; c < this.cols; c++) {
+          const edgeIdx = this.getHEdgeIndex(0, c);
+          const state = this.edgeStates[edgeIdx];
+          if (state === 1 || state === -1) {
+            const cellIdx = 0 * this.cols + c;
+            if (cellColors[cellIdx] === -1) {
+              cellColors[cellIdx] = (state === 1) ? (1 - currColor) : currColor;
+              queue.push(cellIdx);
+            }
+          }
+        }
+        // 2. 下端 (r = rows - 1)
+        for (let c = 0; c < this.cols; c++) {
+          const edgeIdx = this.getHEdgeIndex(this.rows, c);
+          const state = this.edgeStates[edgeIdx];
+          if (state === 1 || state === -1) {
+            const cellIdx = (this.rows - 1) * this.cols + c;
+            if (cellColors[cellIdx] === -1) {
+              cellColors[cellIdx] = (state === 1) ? (1 - currColor) : currColor;
+              queue.push(cellIdx);
+            }
+          }
+        }
+        // 3. 左端 (c = 0)
+        for (let r = 0; r < this.rows; r++) {
+          const edgeIdx = this.getVEdgeIndex(r, 0);
+          const state = this.edgeStates[edgeIdx];
+          if (state === 1 || state === -1) {
+            const cellIdx = r * this.cols + 0;
+            if (cellColors[cellIdx] === -1) {
+              cellColors[cellIdx] = (state === 1) ? (1 - currColor) : currColor;
+              queue.push(cellIdx);
+            }
+          }
+        }
+        // 4. 右端 (c = cols - 1)
+        for (let r = 0; r < this.rows; r++) {
+          const edgeIdx = this.getVEdgeIndex(r, this.cols);
+          const state = this.edgeStates[edgeIdx];
+          if (state === 1 || state === -1) {
+            const cellIdx = r * this.cols + (this.cols - 1);
+            if (cellColors[cellIdx] === -1) {
+              cellColors[cellIdx] = (state === 1) ? (1 - currColor) : currColor;
+              queue.push(cellIdx);
+            }
+          }
+        }
+      } else {
+        // 盤面内セルの近傍への伝播
+        const cr = Math.floor(curr / this.cols);
+        const cc = curr % this.cols;
+
+        const neighbors = [
+          { nr: cr - 1, nc: cc, edgeIdx: this.getHEdgeIndex(cr, cc) },     // 上
+          { nr: cr + 1, nc: cc, edgeIdx: this.getHEdgeIndex(cr + 1, cc) }, // 下
+          { nr: cr, nc: cc - 1, edgeIdx: this.getVEdgeIndex(cr, cc) },     // 左
+          { nr: cr, nc: cc + 1, edgeIdx: this.getVEdgeIndex(cr, cc + 1) }  // 右
+        ];
+
+        for (const adj of neighbors) {
+          if (adj.nr >= 0 && adj.nr < this.rows && adj.nc >= 0 && adj.nc < this.cols) {
+            const nextIdx = adj.nr * this.cols + adj.nc;
+            if (cellColors[nextIdx] === -1) {
+              const state = this.edgeStates[adj.edgeIdx];
+              if (state === 1 || state === -1) {
+                cellColors[nextIdx] = (state === 1) ? (1 - currColor) : currColor;
+                queue.push(nextIdx);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 探索結果の反映（1 = 内側/青, 2 = 外側/赤, 0 = 未確定/色なし）
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        const cellIdx = r * this.cols + c;
+        if (cellColors[cellIdx] === 1) {
+          this.cellStates[cellIdx] = 1; // 1 = 内側 (青)
+        } else if (cellColors[cellIdx] === 0) {
+          this.cellStates[cellIdx] = 2; // 2 = 外側 (赤)
+        } else {
+          this.cellStates[cellIdx] = 0; // 0 = 未確定 (色なし)
+        }
+        this.updateCellUI(r, c);
+      }
+    }
+  }
+
+  updateCellUI(r, c) {
+    const cellGroup = this.cellElements ? this.cellElements[r][c] : this.svg.querySelector(`.cell-${r}-${c}`);
+    if (!cellGroup) return;
+    const state = this.cellStates[r * this.cols + c];
+    
+    cellGroup.classList.remove('bg-color-a', 'bg-color-b');
+    if (state === 1) {
+      cellGroup.classList.add('bg-color-a');
+    } else if (state === 2) {
+      cellGroup.classList.add('bg-color-b');
     }
   }
 
@@ -814,6 +969,7 @@ class LoopCourseGame {
     for (const cell of adjCells) {
       this.updateSingleClueHighlight(cell.r, cell.c);
     }
+    this.computeAutoColoring();
   }
 
   undo() {
@@ -838,6 +994,7 @@ class LoopCourseGame {
     this.redoStack.push(redoGroup.reverse());
     this.updateUndoRedoButtons();
     this.updateCluesHighlight();
+    this.computeAutoColoring();
   }
 
   redo() {
@@ -860,6 +1017,7 @@ class LoopCourseGame {
     this.undoStack.push(undoGroup);
     this.updateUndoRedoButtons();
     this.updateCluesHighlight();
+    this.computeAutoColoring();
   }
 
   resetBoard() {
@@ -871,6 +1029,18 @@ class LoopCourseGame {
         changes.push({ edgeIdx: i, oldState: this.edgeStates[i], newState: 0 });
         this.edgeStates[i] = 0;
         this.updateEdgeUI(i);
+      }
+    }
+    
+    // Reset cell coloring states
+    if (this.cellStates) {
+      for (let i = 0; i < this.cellStates.length; i++) {
+        this.cellStates[i] = 0;
+      }
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          this.updateCellUI(r, c);
+        }
       }
     }
     
@@ -975,6 +1145,7 @@ class LoopCourseGame {
       this.edgeStates[hintIdx] = newState;
       this.updateEdgeUI(hintIdx);
       this.updateCluesHighlight();
+      this.computeAutoColoring();
 
       // Push to Undo stack as a single change step
       this.undoStack.push([{ edgeIdx: hintIdx, oldState, newState }]);
