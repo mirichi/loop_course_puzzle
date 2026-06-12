@@ -49,7 +49,7 @@ class LoopCourseGame {
     
     // Global board mousedown: initiate dragging even from empty spaces
     this.svg.addEventListener('mousedown', (e) => {
-      if (this.gameCompleted || this.isPaused) return;
+      if (this.gameCompleted || this.isPaused || this.isTouchMode) return;
       // If we clicked directly on an edge hitbox, let the hitbox handle it (to toggle correctly)
       if (e.target.classList.contains('edge-hitbox')) return;
       
@@ -953,12 +953,14 @@ class LoopCourseGame {
     
     // Record state change for the current drag group (allows single Undo for entire drag line)
     // Avoid duplicate changes for same edge in one drag stroke
-    const existingChangeIdx = this.currentDragGroup.findIndex(c => c.edgeIdx === edgeIdx);
-    if (existingChangeIdx !== -1) {
-      // Update new state, keep the original oldState from before the drag started
-      this.currentDragGroup[existingChangeIdx].newState = newState;
-    } else {
-      this.currentDragGroup.push({ edgeIdx, oldState, newState });
+    if (this.isDragging) {
+      const existingChangeIdx = this.currentDragGroup.findIndex(c => c.edgeIdx === edgeIdx);
+      if (existingChangeIdx !== -1) {
+        // Update new state, keep the original oldState from before the drag started
+        this.currentDragGroup[existingChangeIdx].newState = newState;
+      } else {
+        this.currentDragGroup.push({ edgeIdx, oldState, newState });
+      }
     }
     
     this.edgeStates[edgeIdx] = newState;
