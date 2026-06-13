@@ -1173,10 +1173,67 @@ class LoopCourseGame {
         } else {
           // Reveal 1 correct move directly from solution
           let foundIdx = -1;
-          for (let i = 0; i < this.numEdges; i++) {
-            if (this.edgeStates[i] === 0) {
-              foundIdx = i;
-              break;
+
+          // Find all dots that have exactly 1 line connected (disconnected line endpoints)
+          const degree1Dots = [];
+          for (let r = 0; r <= this.rows; r++) {
+            for (let c = 0; c <= this.cols; c++) {
+              const dotEdges = this.getDotEdges(r, c);
+              let lineCount = 0;
+              for (const e of dotEdges) {
+                if (this.edgeStates[e] === 1) {
+                  lineCount++;
+                }
+              }
+              if (lineCount === 1) {
+                degree1Dots.push({ r, c });
+              }
+            }
+          }
+
+          // Group 1: empty edges extending a degree-1 dot that is a line in the solution
+          const group1CandidatesSet = new Set();
+          for (const dot of degree1Dots) {
+            const dotEdges = this.getDotEdges(dot.r, dot.c);
+            for (const e of dotEdges) {
+              if (this.edgeStates[e] === 0 && this.solution[e] === 1) {
+                group1CandidatesSet.add(e);
+              }
+            }
+          }
+          const group1Candidates = Array.from(group1CandidatesSet);
+
+          if (group1Candidates.length > 0) {
+            // Select randomly from Group 1
+            const rIdx = Math.floor(Math.random() * group1Candidates.length);
+            foundIdx = group1Candidates[rIdx];
+          }
+
+          // Group 2: any empty edge that is a line in the solution
+          if (foundIdx === -1) {
+            const group2Candidates = [];
+            for (let i = 0; i < this.numEdges; i++) {
+              if (this.edgeStates[i] === 0 && this.solution[i] === 1) {
+                group2Candidates.push(i);
+              }
+            }
+            if (group2Candidates.length > 0) {
+              const rIdx = Math.floor(Math.random() * group2Candidates.length);
+              foundIdx = group2Candidates[rIdx];
+            }
+          }
+
+          // Group 3: any empty edge (which will be a cross)
+          if (foundIdx === -1) {
+            const group3Candidates = [];
+            for (let i = 0; i < this.numEdges; i++) {
+              if (this.edgeStates[i] === 0) {
+                group3Candidates.push(i);
+              }
+            }
+            if (group3Candidates.length > 0) {
+              const rIdx = Math.floor(Math.random() * group3Candidates.length);
+              foundIdx = group3Candidates[rIdx];
             }
           }
           if (foundIdx !== -1) {
