@@ -232,6 +232,25 @@ select:focus {
   color: var(--neon-amber);
 }
 
+#status-text.status-blink {
+  display: inline-block;
+  animation: status-pulse-blink 1.2s ease-in-out infinite;
+  color: var(--neon-cyan) !important;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(0, 242, 254, 0.6);
+}
+
+@keyframes status-pulse-blink {
+  0%, 100% {
+    opacity: 1;
+    text-shadow: 0 0 6px rgba(0, 242, 254, 0.5);
+  }
+  50% {
+    opacity: 1;
+    text-shadow: 0 0 18px rgba(0, 242, 254, 1.0), 0 0 28px rgba(0, 242, 254, 0.6);
+  }
+}
+
 .timer-item {
   font-size: 1.1rem;
   font-weight: 600;

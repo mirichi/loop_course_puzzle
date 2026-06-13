@@ -194,6 +194,13 @@ class LoopCourseSolver {
     if (this.edgeStates[edgeIdx] === state) return true;
     if (this.edgeStates[edgeIdx] !== 0) return false; // Contradiction
     
+    if (this.maxDeductions !== undefined) {
+      if (this.deductionsCount >= this.maxDeductions) {
+        return true;
+      }
+      this.deductionsCount++;
+    }
+    
     if (state === 1) {
       let dotA, dotB;
       if (edgeIdx < this.numH) {
@@ -262,8 +269,13 @@ class LoopCourseSolver {
   }
 
   // AC-3 local constraint propagation loop
-  deductIncremental() {
+  deductIncremental(maxDeductions = Infinity) {
+    this.maxDeductions = maxDeductions;
+    this.deductionsCount = 0;
     while (this.cellQueueHead !== this.cellQueueTail || this.dotQueueHead !== this.dotQueueTail) {
+      if (this.maxDeductions !== undefined && this.deductionsCount >= this.maxDeductions) {
+        return true;
+      }
       const cellIdx = this.dequeueCell();
       if (cellIdx !== -1) {
         const r = Math.floor(cellIdx / this.cols);

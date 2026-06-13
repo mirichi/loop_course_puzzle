@@ -3,33 +3,34 @@ class LoopCourseGame {
     this.rows = 7;
     this.cols = 7;
     this.difficulty = 'medium';
-    
+
     this.clues = [];
     this.solution = []; // original generated loop
     this.edgeStates = []; // 0 = empty, 1 = line, -1 = cross
-    
+
     // History stacks for Undo / Redo
     this.undoStack = [];
     this.redoStack = [];
     this.currentDragGroup = []; // Accumulates changes during a single drag operation
-    
+
     // UI Interaction states
     this.activeTool = 'pen'; // 'pen' or 'cross' or 'eraser'
     this.isDragging = false;
     this.dragState = 0; // State being painted: -1, 0, or 1
-    
+
     // Timer
     this.timerInterval = null;
     this.secondsElapsed = 0;
     this.isPaused = false;
     this.gameCompleted = false;
+    this.hintFailedOnce = false;
     this.isTouchMode = false;
     this.autoColorEnabled = false;
-    
+
     // Layout parameters
     this.spacing = 54; // Distance between dots in px
     this.padding = 30; // Border padding in px
-    
+
     this.initDOM();
     this.startNewGame();
   }
@@ -40,28 +41,28 @@ class LoopCourseGame {
     this.statusTextEl = document.getElementById('status-text');
     this.undoBtn = document.getElementById('btn-undo');
     this.redoBtn = document.getElementById('btn-redo');
-    
+
     // Setup event listeners for settings
     document.getElementById('btn-new-game').addEventListener('click', () => this.startNewGame());
-    
+
     // Disable browser context menu on the entire board to allow smooth right-click tool usage
     this.svg.addEventListener('contextmenu', (e) => e.preventDefault());
-    
+
     // Global board mousedown: initiate dragging even from empty spaces
     this.svg.addEventListener('mousedown', (e) => {
       if (this.gameCompleted || this.isPaused || this.isTouchMode) return;
       // If we clicked directly on an edge hitbox, let the hitbox handle it (to toggle correctly)
       if (e.target.classList.contains('edge-hitbox')) return;
-      
+
       this.isDragging = true;
       this.lastMouseX = e.clientX;
       this.lastMouseY = e.clientY;
       this.mouseHistory = [{ x: e.clientX, y: e.clientY, time: Date.now() }];
-      
+
       const startSVG = this.getSVGCoords(e.clientX, e.clientY);
       this.lastSVGX = startSVG.x;
       this.lastSVGY = startSVG.y;
-      
+
       const isRightClick = e.button === 2;
       if (isRightClick || this.activeTool === 'cross') {
         this.dragState = -1; // Cross
@@ -76,7 +77,7 @@ class LoopCourseGame {
     this.svg.addEventListener('touchstart', () => {
       this.isTouchMode = true;
     }, { passive: true });
-    
+
     // Handle tool switching
     const toolBtns = document.querySelectorAll('.tool-btn');
     toolBtns.forEach(btn => {
@@ -87,7 +88,7 @@ class LoopCourseGame {
         this.activeTool = targetBtn.dataset.tool;
       });
     });
-    
+
     // Undo / Redo
     this.undoBtn.addEventListener('click', () => this.undo());
     this.redoBtn.addEventListener('click', () => this.redo());
@@ -106,7 +107,7 @@ class LoopCourseGame {
     }
     document.getElementById('btn-hint').addEventListener('click', () => this.giveHint());
     document.getElementById('btn-reset').addEventListener('click', () => this.resetBoard());
-    
+
     // Keybinds (Z for Undo, Y for Redo, Space to toggle tools)
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'z') {
@@ -140,7 +141,7 @@ class LoopCourseGame {
     };
     window.addEventListener('mouseup', endDrag);
     window.addEventListener('touchend', endDrag);
-    
+
     // Global mousemove for drag tracking
     this.svg.addEventListener('mousemove', (e) => {
       if (!this.isDragging) return;
@@ -156,28 +157,29 @@ class LoopCourseGame {
 
   startNewGame() {
     this.gameCompleted = false;
+    this.resetHintFailedState();
     document.getElementById('victory-modal').classList.remove('active');
-    
+
     // Read current settings
     const sizeVal = document.getElementById('select-size').value; // "5x5", "7x7", "10x10"
     const [cols, rows] = sizeVal.split('x').map(Number);
     this.rows = rows;
     this.cols = cols;
     this.difficulty = document.getElementById('select-difficulty').value;
-    
+
     // Show generating status
     this.statusTextEl.textContent = 'パズル作成中... (マルチスレッド実行中 ⚡)';
     this.statusTextEl.classList.add('loading');
-    
+
     // Terminate existing worker if still running to prevent resource leaks
     if (this.generatorWorker) {
       this.generatorWorker.terminate();
     }
-    
+
     try {
       // Instantiate background Worker with timestamp to bypass caching
       this.generatorWorker = new Worker(`js/generator.worker.js?v=${Date.now()}`);
-      
+
       this.generatorWorker.onmessage = (e) => {
         const data = e.data;
         if (!data.success) {
@@ -186,37 +188,37 @@ class LoopCourseGame {
           this.statusTextEl.classList.remove('loading');
           return;
         }
-        
+
         this.clues = data.clues;
         this.solution = data.solution;
-        
+
         this.numH = (this.rows + 1) * this.cols;
         this.numV = this.rows * (this.cols + 1);
         this.numEdges = this.numH + this.numV;
-        
+
         this.edgeStates = new Int8Array(this.numEdges);
         this.cellStates = new Int8Array(this.rows * this.cols);
         this.undoStack = [];
         this.redoStack = [];
         this.currentDragGroup = [];
-        
+
         this.updateUndoRedoButtons();
         this.renderBoard();
         this.startTimer();
         this.computeAutoColoring();
-        
+
         if (data.engineUsed === "WASM") {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
         } else {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator js-engine">JS互換エンジン ☕</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
         }
         this.statusTextEl.classList.remove('loading');
-        
+
         // Cleanup Worker resources
         this.generatorWorker.terminate();
         this.generatorWorker = null;
       };
-      
+
       // Trigger background thread puzzle generation
       this.generatorWorker.postMessage({
         rows: this.rows,
@@ -232,31 +234,31 @@ class LoopCourseGame {
   generateOnMainThread() {
     this.statusTextEl.textContent = 'パズル作成中... (メインスレッドで実行中 ⚡)';
     this.statusTextEl.classList.add('loading');
-    
+
     // Small timeout to allow the browser UI to render the "パズル作成中" message
     setTimeout(() => {
       try {
         const generator = new LoopCourseGenerator(this.rows, this.cols);
         const puzzle = generator.generate(this.difficulty);
-        
+
         this.clues = puzzle.clues;
         this.solution = puzzle.solution;
-        
+
         this.numH = (this.rows + 1) * this.cols;
         this.numV = this.rows * (this.cols + 1);
         this.numEdges = this.numH + this.numV;
-        
+
         this.edgeStates = new Int8Array(this.numEdges);
         this.cellStates = new Int8Array(this.rows * this.cols);
         this.undoStack = [];
         this.redoStack = [];
         this.currentDragGroup = [];
-        
+
         this.updateUndoRedoButtons();
         this.renderBoard();
         this.startTimer();
         this.computeAutoColoring();
-        
+
         if (puzzle.engineUsed === "WASM") {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で生成完了）！すべての数字を満たす1つのループを作ろう。';
         } else {
@@ -273,29 +275,29 @@ class LoopCourseGame {
 
   renderBoard() {
     this.svg.innerHTML = '';
-    
+
     // Cache cell and edge elements to avoid slow DOM queries during drag operations
     this.cellElements = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
     this.edgeElements = new Array(this.numEdges).fill(null);
-    
+
     const svgWidth = this.cols * this.spacing + this.padding * 2;
     const svgHeight = this.rows * this.spacing + this.padding * 2;
     this.svg.setAttribute('width', svgWidth);
     this.svg.setAttribute('height', svgHeight);
     this.svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
-    
+
     // 1. Draw cell elements (backgrounds for all cells, clues where present)
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const clue = this.clues[r][c];
-        
+
         const cx = c * this.spacing + this.padding + this.spacing / 2;
         const cy = r * this.spacing + this.padding + this.spacing / 2;
-        
+
         // Group for cell
         const cellGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         cellGroup.setAttribute('class', `cell-clue-group cell-${r}-${c}`);
-        
+
         // Background subtle rect to show completed state or color marking
         const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         bg.setAttribute('x', c * this.spacing + this.padding + 2);
@@ -305,7 +307,7 @@ class LoopCourseGame {
         bg.setAttribute('rx', '6');
         bg.setAttribute('class', 'cell-bg');
         cellGroup.appendChild(bg);
-        
+
         // Clue text (only if clue is not null)
         if (clue !== null) {
           const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -316,20 +318,20 @@ class LoopCourseGame {
           txt.textContent = clue;
           cellGroup.appendChild(txt);
         }
-        
+
         this.svg.appendChild(cellGroup);
-        
+
         // Store cellGroup in cache
         this.cellElements[r][c] = cellGroup;
       }
     }
-    
+
     // 2. Draw Edges (Line and Cross representation, along with Wide Hitboxes for touch/clicks)
     const drawEdge = (edgeIdx, x1, y1, x2, y2, isHorizontal) => {
       const edgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       edgeGroup.setAttribute('class', `edge-group edge-${edgeIdx}`);
       edgeGroup.dataset.edgeIdx = edgeIdx;
-      
+
       // A. Neon Line element
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       line.setAttribute('x1', x1);
@@ -338,30 +340,30 @@ class LoopCourseGame {
       line.setAttribute('y2', y2);
       line.setAttribute('class', 'grid-line');
       edgeGroup.appendChild(line);
-      
+
       // B. Cross (×) element (shown when edge state is -1)
       const crossGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       crossGroup.setAttribute('class', 'cross-mark');
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
       const cs = 5; // cross size half
-      
+
       const c1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       c1.setAttribute('x1', mx - cs);
       c1.setAttribute('y1', my - cs);
       c1.setAttribute('x2', mx + cs);
       c1.setAttribute('y2', my + cs);
-      
+
       const c2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       c2.setAttribute('x1', mx + cs);
       c2.setAttribute('y1', my - cs);
       c2.setAttribute('x2', mx - cs);
       c2.setAttribute('y2', my + cs);
-      
+
       crossGroup.appendChild(c1);
       crossGroup.appendChild(c2);
       edgeGroup.appendChild(crossGroup);
-      
+
       // C. Wide Transparent Hitbox for extremely smooth clicking/dragging
       const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       hitbox.setAttribute('x1', x1);
@@ -370,12 +372,12 @@ class LoopCourseGame {
       hitbox.setAttribute('y2', y2);
       hitbox.setAttribute('class', 'edge-hitbox');
       hitbox.dataset.edgeIdx = edgeIdx;
-      
+
       // Touch coordinates tracking for fast mobile taps without 300ms delay
       let touchStartX = 0;
       let touchStartY = 0;
       let touchStartTime = 0;
-      
+
       hitbox.addEventListener('touchstart', (e) => {
         this.isTouchMode = true;
         const touch = e.changedTouches[0];
@@ -383,7 +385,7 @@ class LoopCourseGame {
         touchStartY = touch.clientY;
         touchStartTime = Date.now();
       }, { passive: true });
-      
+
       hitbox.addEventListener('touchend', (e) => {
         if (!this.isTouchMode) return;
         const touch = e.changedTouches[0];
@@ -391,7 +393,7 @@ class LoopCourseGame {
         const dy = touch.clientY - touchStartY;
         const dist = Math.hypot(dx, dy);
         const elapsed = Date.now() - touchStartTime;
-        
+
         // If movement is negligible and duration is fast, it's a deliberate tap.
         // Process instantly and cancel emulated mouse events to bypass 300ms delay.
         if (dist < 6 && elapsed < 300) {
@@ -399,7 +401,7 @@ class LoopCourseGame {
           this.handleEdgeClickTouch(edgeIdx);
         }
       }, { passive: false });
-      
+
       // Event listeners for dragging / clicking (PC Mouse / Fallback)
       hitbox.addEventListener('mousedown', (e) => {
         if (this.isTouchMode) return; // Ignore on touch screens to allow default scroll/zoom
@@ -411,16 +413,16 @@ class LoopCourseGame {
       });
       // Block right click context menu on the grid
       hitbox.addEventListener('contextmenu', (e) => e.preventDefault());
-      
+
       edgeGroup.appendChild(hitbox);
       this.svg.appendChild(edgeGroup);
-      
+
       // Store edgeGroup in cache
       this.edgeElements[edgeIdx] = edgeGroup;
-      
+
       this.updateEdgeUI(edgeIdx);
     };
-    
+
     // Draw all horizontal edges
     for (let r = 0; r <= this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
@@ -432,7 +434,7 @@ class LoopCourseGame {
         drawEdge(edgeIdx, x1, y1, x2, y2, true);
       }
     }
-    
+
     // Draw all vertical edges
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c <= this.cols; c++) {
@@ -444,7 +446,7 @@ class LoopCourseGame {
         drawEdge(edgeIdx, x1, y1, x2, y2, false);
       }
     }
-    
+
     // 3. Draw Dots (vertexes) on top of the lines
     for (let r = 0; r <= this.rows; r++) {
       for (let c = 0; c <= this.cols; c++) {
@@ -456,7 +458,7 @@ class LoopCourseGame {
         this.svg.appendChild(dot);
       }
     }
-    
+
     // Initialize clue satisfying highlight
     this.updateCluesHighlight();
   }
@@ -464,12 +466,12 @@ class LoopCourseGame {
   updateEdgeUI(edgeIdx) {
     const edgeGroup = this.edgeElements ? this.edgeElements[edgeIdx] : this.svg.querySelector(`.edge-${edgeIdx}`);
     if (!edgeGroup) return;
-    
+
     const state = this.edgeStates[edgeIdx];
-    
+
     // Clear old state classes
     edgeGroup.classList.remove('state-line', 'state-cross', 'state-empty');
-    
+
     if (state === 1) {
       edgeGroup.classList.add('state-line');
     } else if (state === -1) {
@@ -483,16 +485,16 @@ class LoopCourseGame {
     if (r < 0 || r >= this.rows || c < 0 || c >= this.cols) return;
     const clue = this.clues[r][c];
     if (clue === null) return;
-    
+
     const cellGroup = this.cellElements ? this.cellElements[r][c] : this.svg.querySelector(`.cell-${r}-${c}`);
     if (!cellGroup) return;
-    
+
     const cellEdges = this.getCellEdges(r, c);
     const linesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === 1 ? 1 : 0), 0);
     const crossesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === -1 ? 1 : 0), 0);
-    
+
     cellGroup.classList.remove('clue-satisfied', 'clue-error');
-    
+
     if (linesCount === clue) {
       cellGroup.classList.add('clue-satisfied');
     } else if (linesCount > clue || crossesCount > (4 - clue)) {
@@ -510,10 +512,10 @@ class LoopCourseGame {
 
   computeAutoColoring() {
     if (!this.cellStates) return;
-    
+
     // cellStates を初期化（0 = 外側/未着色、1 = 内側/青）
     this.cellStates.fill(0);
-    
+
     if (!this.autoColorEnabled) {
       // 自動色塗りが無効の場合は、すべてのセルの表示をクリアして終了
       for (let r = 0; r < this.rows; r++) {
@@ -526,7 +528,7 @@ class LoopCourseGame {
 
     const numCells = this.rows * this.cols;
     const OUTSIDE = numCells;
-    
+
     // cellColors 配列。-1 = 未確定, 0 = 外側, 1 = 内側
     const cellColors = new Int8Array(numCells + 1);
     cellColors.fill(-1);
@@ -636,7 +638,7 @@ class LoopCourseGame {
     const cellGroup = this.cellElements ? this.cellElements[r][c] : this.svg.querySelector(`.cell-${r}-${c}`);
     if (!cellGroup) return;
     const state = this.cellStates[r * this.cols + c];
-    
+
     cellGroup.classList.remove('bg-color-a', 'bg-color-b');
     if (state === 1) {
       cellGroup.classList.add('bg-color-a');
@@ -647,20 +649,20 @@ class LoopCourseGame {
 
   handleEdgeMouseDown(e, edgeIdx) {
     if (this.gameCompleted || this.isPaused) return;
-    
+
     this.isDragging = true;
     this.lastMouseX = e.clientX;
     this.lastMouseY = e.clientY;
     this.mouseHistory = [{ x: e.clientX, y: e.clientY, time: Date.now() }];
-    
+
     const startSVG = this.getSVGCoords(e.clientX, e.clientY);
     this.lastSVGX = startSVG.x;
     this.lastSVGY = startSVG.y;
-    
+
     // Determine target state based on mouse button and active tools
     const isRightClick = e.button === 2;
     const currentState = this.edgeStates[edgeIdx];
-    
+
     if (isRightClick || this.activeTool === 'cross') {
       this.dragState = (currentState === -1) ? 0 : -1;
     } else if (this.activeTool === 'eraser') {
@@ -669,16 +671,16 @@ class LoopCourseGame {
       // Pen tool (normal left click)
       this.dragState = (currentState === 1) ? 0 : 1;
     }
-    
+
     this.applyEdgeStateChange(edgeIdx, this.dragState);
   }
 
   handleEdgeClickTouch(edgeIdx) {
     if (this.gameCompleted || this.isPaused) return;
-    
+
     const currentState = this.edgeStates[edgeIdx];
     let newState = 0;
-    
+
     if (this.activeTool === 'cross') {
       // Cycle: Empty (0) -> Cross (-1) -> Line (1) -> Empty (0)
       if (currentState === 0) {
@@ -701,22 +703,22 @@ class LoopCourseGame {
         newState = 0;
       }
     }
-    
+
     if (currentState === newState) return; // No change
-    
+
     this.applyEdgeStateChange(edgeIdx, newState);
-    
+
     // Push to Undo stack as a single change step
     this.undoStack.push([{ edgeIdx, oldState: currentState, newState }]);
     this.redoStack = [];
     this.updateUndoRedoButtons();
-    
+
     this.checkWinCondition();
   }
 
   handleEdgeDragEnter(edgeIdx, clientX = null, clientY = null) {
     if (!this.isDragging || this.gameCompleted || this.isPaused) return;
-    
+
     // Prevent creating a branch (degree > 2) at endpoints during drag-drawing.
     // If the user wants to draw a branch/T-junction, they must explicitly click the edge.
     if (this.dragState === 1) {
@@ -734,7 +736,7 @@ class LoopCourseGame {
         r2 = r1 + 1;
         c2 = c1;
       }
-      
+
       if (this.countDrawnLinesForDot(r1, c1, edgeIdx) >= 2 || this.countDrawnLinesForDot(r2, c2, edgeIdx) >= 2) {
         return; // Block drawing this edge via drag as it would create a branch!
       }
@@ -750,14 +752,14 @@ class LoopCourseGame {
         }
       }
     }
-    
+
     // Directional Lock to prevent accidental perpendicular line drawing
     // ONLY apply when drawing solid lines (dragState === 1). 
     // Allow players to drag freely when placing crosses (-1) or erasing (0).
     if (this.dragState === 1 && this.lastMouseX !== null && this.lastMouseY !== null && clientX !== null && clientY !== null) {
       const edge = this.getEdgeCoords(edgeIdx);
       const localCoords = this.getSVGCoords(clientX, clientY);
-      
+
       let isIntentionalSwipe = false;
       if (edge.isVertical) {
         const distFromTop = localCoords.y - edge.y1;
@@ -793,7 +795,7 @@ class LoopCourseGame {
       if (!isIntentionalSwipe) {
         let dx = 0;
         let dy = 0;
-        
+
         // Calculate high-fidelity instantaneous vector from recent history
         if (this.mouseHistory && this.mouseHistory.length > 1) {
           // Find the most recent point in history that is at least 12px away
@@ -813,28 +815,28 @@ class LoopCourseGame {
           dx = clientX - this.lastMouseX;
           dy = clientY - this.lastMouseY;
         }
-        
+
         // If the user drags mostly horizontally, block vertical edges
         if (edge.isVertical && Math.abs(dx) > 1.8 * Math.abs(dy) && Math.abs(dx) > 6) {
           return;
         }
-        
+
         // If the user drags mostly vertically, block horizontal edges
         if (!edge.isVertical && Math.abs(dy) > 1.8 * Math.abs(dx) && Math.abs(dy) > 6) {
           return;
         }
       }
     }
-    
+
     if (clientX !== null && clientY !== null) {
       this.lastMouseX = clientX;
       this.lastMouseY = clientY;
-      
+
       const localCoords = this.getSVGCoords(clientX, clientY);
       this.lastSVGX = localCoords.x;
       this.lastSVGY = localCoords.y;
     }
-    
+
     this.applyEdgeStateChange(edgeIdx, this.dragState);
   }
 
@@ -950,7 +952,8 @@ class LoopCourseGame {
   applyEdgeStateChange(edgeIdx, newState) {
     const oldState = this.edgeStates[edgeIdx];
     if (oldState === newState) return;
-    
+    this.resetHintFailedState();
+
     // Record state change for the current drag group (allows single Undo for entire drag line)
     // Avoid duplicate changes for same edge in one drag stroke
     if (this.isDragging) {
@@ -962,10 +965,10 @@ class LoopCourseGame {
         this.currentDragGroup.push({ edgeIdx, oldState, newState });
       }
     }
-    
+
     this.edgeStates[edgeIdx] = newState;
     this.updateEdgeUI(edgeIdx);
-    
+
     // Performance optimization: only update highlights for adjacent cells (max 2) instead of the whole board
     const adjCells = this.getAdjacentCellsForEdge(edgeIdx);
     for (const cell of adjCells) {
@@ -976,23 +979,24 @@ class LoopCourseGame {
 
   undo() {
     if (this.undoStack.length === 0 || this.gameCompleted) return;
-    
+    this.resetHintFailedState();
+
     const changeGroup = this.undoStack.pop();
     const redoGroup = [];
-    
+
     // Apply changes in reverse order
     for (let i = changeGroup.length - 1; i >= 0; i--) {
       const change = changeGroup[i];
       this.edgeStates[change.edgeIdx] = change.oldState;
       this.updateEdgeUI(change.edgeIdx);
-      
+
       redoGroup.push({
         edgeIdx: change.edgeIdx,
         oldState: change.oldState,
         newState: change.newState
       });
     }
-    
+
     this.redoStack.push(redoGroup.reverse());
     this.updateUndoRedoButtons();
     this.updateCluesHighlight();
@@ -1001,21 +1005,22 @@ class LoopCourseGame {
 
   redo() {
     if (this.redoStack.length === 0 || this.gameCompleted) return;
-    
+    this.resetHintFailedState();
+
     const changeGroup = this.redoStack.pop();
     const undoGroup = [];
-    
+
     for (const change of changeGroup) {
       this.edgeStates[change.edgeIdx] = change.newState;
       this.updateEdgeUI(change.edgeIdx);
-      
+
       undoGroup.push({
         edgeIdx: change.edgeIdx,
         oldState: change.oldState,
         newState: change.newState
       });
     }
-    
+
     this.undoStack.push(undoGroup);
     this.updateUndoRedoButtons();
     this.updateCluesHighlight();
@@ -1024,7 +1029,7 @@ class LoopCourseGame {
 
   resetBoard() {
     if (this.gameCompleted) return;
-    
+
     const changes = [];
     for (let i = 0; i < this.numEdges; i++) {
       if (this.edgeStates[i] !== 0) {
@@ -1033,7 +1038,7 @@ class LoopCourseGame {
         this.updateEdgeUI(i);
       }
     }
-    
+
     // Reset cell coloring states
     if (this.cellStates) {
       for (let i = 0; i < this.cellStates.length; i++) {
@@ -1045,12 +1050,19 @@ class LoopCourseGame {
         }
       }
     }
-    
+
     if (changes.length > 0) {
       this.undoStack.push(changes);
       this.redoStack = [];
       this.updateUndoRedoButtons();
       this.updateCluesHighlight();
+    }
+  }
+
+  resetHintFailedState() {
+    this.hintFailedOnce = false;
+    if (this.statusTextEl) {
+      this.statusTextEl.classList.remove('status-blink');
     }
   }
 
@@ -1077,97 +1089,125 @@ class LoopCourseGame {
         }
       });
       this.statusTextEl.textContent = `❌ 間違いが ${mistakes.length} 箇所あります（赤く点滅している線）。まずはこれらを修正してください。`;
+      this.resetHintFailedState();
       return;
     }
 
-    // 3. If there are no mistakes, look for undecided edges that should contain a LINE (solution === 1)
-    const correctUndecidedLines = [];
-    for (let i = 0; i < this.numEdges; i++) {
-      if (this.edgeStates[i] === 0 && this.solution[i] === 1) {
-        correctUndecidedLines.push(i);
-      }
-    }
+    // 3. If there are no mistakes, call LoopCourseHintSolver to find a logical hint
+    const hint = LoopCourseHintSolver.getHint(
+      this.rows,
+      this.cols,
+      this.clues,
+      this.edgeStates,
+      this.solution,
+      true
+    );
 
-    // 4. If we found undecided correct lines, prioritize those connected to already drawn lines
-    if (correctUndecidedLines.length > 0) {
-      // Find all dots that touch currently drawn lines (state === 1)
-      const activeDots = new Set();
-      for (let i = 0; i < this.numEdges; i++) {
-        if (this.edgeStates[i] === 1) {
-          let dotA, dotB;
-          if (i < this.numH) {
-            const r = Math.floor(i / this.cols);
-            const c = i % this.cols;
-            dotA = r * (this.cols + 1) + c;
-            dotB = dotA + 1;
-          } else {
-            const vIdx = i - this.numH;
-            const r = Math.floor(vIdx / (this.cols + 1));
-            const c = vIdx % (this.cols + 1);
-            dotA = r * (this.cols + 1) + c;
-            dotB = dotA + (this.cols + 1);
-          }
-          activeDots.add(dotA);
-          activeDots.add(dotB);
+    if (hint) {
+      this.resetHintFailedState();
+
+      if (hint.isMulti) {
+        const changes = [];
+        for (const change of hint.changes) {
+          const oldState = this.edgeStates[change.edgeIdx];
+          this.edgeStates[change.edgeIdx] = change.state;
+          this.updateEdgeUI(change.edgeIdx);
+          changes.push({ edgeIdx: change.edgeIdx, oldState, newState: change.state });
         }
-      }
+        this.updateCluesHighlight();
+        this.computeAutoColoring();
 
-      // Filter correct undecided lines that connect to these active dots
-      let candidateLines = correctUndecidedLines;
-      if (activeDots.size > 0) {
-        const connectedLines = [];
-        for (const idx of correctUndecidedLines) {
-          let dotA, dotB;
-          if (idx < this.numH) {
-            const r = Math.floor(idx / this.cols);
-            const c = idx % this.cols;
-            dotA = r * (this.cols + 1) + c;
-            dotB = dotA + 1;
-          } else {
-            const vIdx = idx - this.numH;
-            const r = Math.floor(vIdx / (this.cols + 1));
-            const c = vIdx % (this.cols + 1);
-            dotA = r * (this.cols + 1) + c;
-            dotB = dotA + (this.cols + 1);
-          }
-          if (activeDots.has(dotA) || activeDots.has(dotB)) {
-            connectedLines.push(idx);
+        // Push all changes to Undo stack as a single change step
+        this.undoStack.push(changes);
+        this.redoStack = [];
+        this.updateUndoRedoButtons();
+
+        // Trigger golden pulsing glow animation on all hinted edges
+        for (const change of hint.changes) {
+          const edgeGroup = this.edgeElements ? this.edgeElements[change.edgeIdx] : this.svg.querySelector(`.edge-${change.edgeIdx}`);
+          if (edgeGroup) {
+            edgeGroup.classList.add('hint-pulse');
+            setTimeout(() => {
+              edgeGroup.classList.remove('hint-pulse');
+            }, 1600);
           }
         }
-        if (connectedLines.length > 0) {
-          candidateLines = connectedLines;
+
+        this.statusTextEl.textContent = `💡 ヒント：${hint.reason}`;
+        this.checkWinCondition();
+      } else {
+        const hintIdx = hint.edgeIdx;
+        const oldState = 0;
+        const newState = hint.state; // 1 or -1
+
+        this.edgeStates[hintIdx] = newState;
+        this.updateEdgeUI(hintIdx);
+        this.updateCluesHighlight();
+        this.computeAutoColoring();
+
+        // Push to Undo stack as a single change step
+        this.undoStack.push([{ edgeIdx: hintIdx, oldState, newState }]);
+        this.redoStack = [];
+        this.updateUndoRedoButtons();
+
+        // Trigger golden pulsing glow animation on the hinted edge
+        const edgeGroup = this.edgeElements ? this.edgeElements[hintIdx] : this.svg.querySelector(`.edge-${hintIdx}`);
+        if (edgeGroup) {
+          edgeGroup.classList.add('hint-pulse');
+          setTimeout(() => {
+            edgeGroup.classList.remove('hint-pulse');
+          }, 1600);
         }
+
+        this.statusTextEl.textContent = `💡 ヒント：${hint.reason}`;
+        this.checkWinCondition();
       }
-
-      // Pick a random line from the prioritized candidates
-      const hintIdx = candidateLines[Math.floor(Math.random() * candidateLines.length)];
-      const oldState = 0;
-      const newState = 1;
-
-      this.edgeStates[hintIdx] = newState;
-      this.updateEdgeUI(hintIdx);
-      this.updateCluesHighlight();
-      this.computeAutoColoring();
-
-      // Push to Undo stack as a single change step
-      this.undoStack.push([{ edgeIdx: hintIdx, oldState, newState }]);
-      this.redoStack = [];
-      this.updateUndoRedoButtons();
-
-      // Trigger golden pulsing glow animation on the hinted edge
-      const edgeGroup = this.edgeElements ? this.edgeElements[hintIdx] : this.svg.querySelector(`.edge-${hintIdx}`);
-      if (edgeGroup) {
-        edgeGroup.classList.add('hint-pulse');
-        setTimeout(() => {
-          edgeGroup.classList.remove('hint-pulse');
-        }, 1600);
-      }
-
-      this.statusTextEl.textContent = '💡 ヒント適用！正しい線を1手確定しました。';
-      this.checkWinCondition();
     } else {
-      // 5. If there are no mistakes and no correct lines left to draw (the loop is fully complete)
-      this.statusTextEl.textContent = '💡 すべての正しい線がすでに引かれています！クリア状態です！';
+      // 4. If no logical hint was found, check if there are undecided edges
+      const hasUndecided = Array.from(this.edgeStates).some(s => s === 0);
+      if (hasUndecided) {
+        if (!this.hintFailedOnce) {
+          this.hintFailedOnce = true;
+          this.statusTextEl.classList.add('status-blink');
+          this.statusTextEl.textContent = '💡 定石を使用した確定ができませんでした。もう一度ヒントボタンを押すと、正答から1手開示します。';
+        } else {
+          // Reveal 1 correct move directly from solution
+          let foundIdx = -1;
+          for (let i = 0; i < this.numEdges; i++) {
+            if (this.edgeStates[i] === 0) {
+              foundIdx = i;
+              break;
+            }
+          }
+          if (foundIdx !== -1) {
+            const newState = this.solution[foundIdx];
+            const oldState = 0;
+            this.edgeStates[foundIdx] = newState;
+            this.updateEdgeUI(foundIdx);
+            this.updateCluesHighlight();
+            this.computeAutoColoring();
+
+            this.undoStack.push([{ edgeIdx: foundIdx, oldState, newState }]);
+            this.redoStack = [];
+            this.updateUndoRedoButtons();
+
+            const edgeGroup = this.edgeElements ? this.edgeElements[foundIdx] : this.svg.querySelector(`.edge-${foundIdx}`);
+            if (edgeGroup) {
+              edgeGroup.classList.add('hint-pulse');
+              setTimeout(() => {
+                edgeGroup.classList.remove('hint-pulse');
+              }, 1600);
+            }
+
+            this.resetHintFailedState();
+            this.statusTextEl.textContent = '💡 手詰まりのため、正答から1手開示しました。';
+            this.checkWinCondition();
+          }
+        }
+      } else {
+        this.resetHintFailedState();
+        this.statusTextEl.textContent = '💡 すべての正しい線がすでに引かれています！クリア状態です！';
+      }
     }
   }
 
@@ -1214,7 +1254,7 @@ class LoopCourseGame {
     // Reference global LoopCourseSolver
     const solver = new window.LoopCourseSolver(this.rows, this.cols, this.clues);
     solver.edgeStates = [...this.edgeStates];
-    
+
     if (solver.isSolved()) {
       this.gameCompleted = true;
       this.stopTimer();
@@ -1224,7 +1264,7 @@ class LoopCourseGame {
 
   triggerWinAnimation() {
     this.statusTextEl.textContent = '🎉 おめでとうございます！パズルが完成しました！';
-    
+
     // Wave animation for the completed neon loop
     const lines = this.svg.querySelectorAll('.state-line');
     lines.forEach((line, i) => {
@@ -1233,7 +1273,7 @@ class LoopCourseGame {
       void line.offsetWidth;
       line.style.animation = `neon-pulse 1.2s ease-in-out infinite alternate, win-wave 0.6s ease-in-out ${i * 0.03}s`;
     });
-    
+
     // Display victory modal
     document.getElementById('modal-time').textContent = this.formatTime(this.secondsElapsed);
     document.getElementById('victory-modal').classList.add('active');
@@ -1245,7 +1285,7 @@ class LoopCourseGame {
     this.secondsElapsed = 0;
     this.timerEl.textContent = '00:00';
     this.isPaused = false;
-    
+
     this.timerInterval = setInterval(() => {
       if (!this.isPaused && !this.gameCompleted) {
         this.secondsElapsed++;
