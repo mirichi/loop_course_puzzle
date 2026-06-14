@@ -1410,13 +1410,31 @@ static bool checkSolvability(const char* difficulty) {
 
 static int8_t sortTargetClues[MAX_CELLS];
 
+static bool hasAdjacentZeroClue(int idx) {
+    int r = idx / cols;
+    int c = idx % cols;
+    int dr[] = {-1, 1, 0, 0};
+    int dc[] = {0, 0, -1, 1};
+    for (int i = 0; i < 4; i++) {
+        int nr = r + dr[i];
+        int nc = c + dc[i];
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+            int nIdx = nr * cols + nc;
+            if (sortTargetClues[nIdx] == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static int compareCells(const void* a, const void* b) {
     int idxA = *(const int*)a;
     int idxB = *(const int*)b;
     int valA = sortTargetClues[idxA];
     int valB = sortTargetClues[idxB];
-    int pA = (valA == 0) ? 0 : ((valA == 3) ? 2 : 1);
-    int pB = (valB == 0) ? 0 : ((valB == 3) ? 2 : 1);
+    int pA = (valA == 1 || valA == 2) ? 0 : ((valA == 0) ? (hasAdjacentZeroClue(idxA) ? 0 : 1) : 2);
+    int pB = (valB == 1 || valB == 2) ? 0 : ((valB == 0) ? (hasAdjacentZeroClue(idxB) ? 0 : 1) : 2);
     return pA - pB;
 }
 
@@ -1426,9 +1444,15 @@ void generate_puzzle_wasm(const char* difficulty) {
     debugTimeoutCount = 0;
     debugContradictionCount = 0;
 
-    // 1. Generate a random solved loop and calculate target clues
-    generateRandomLoop();
-    calculateClues();
+    // 1. Generate a random solved loop and calculate target clues until initial board is solvable
+    bool initSolvable = false;
+    int generateAttempts = 0;
+    while (!initSolvable && generateAttempts < 100) {
+        generateAttempts++;
+        generateRandomLoop();
+        calculateClues();
+        initSolvable = checkSolvability(difficulty);
+    }
 
     // Store target loop and clues
     static int8_t targetEdgeStates[MAX_EDGES];
@@ -1483,7 +1507,7 @@ void generate_puzzle_wasm(const char* difficulty) {
            totalCells, currentClueCount, targetKeepCount);
     
     // Check initial board solvability before any clue removal
-    bool initSolvable = checkSolvability(difficulty);
+    initSolvable = checkSolvability(difficulty);
     printf("Initial Board Solvability check: %d\n", initSolvable);
 
     for (int i = 0; i < finalRemainingCount; i++) {

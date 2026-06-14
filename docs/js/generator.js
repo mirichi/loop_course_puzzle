@@ -15,7 +15,7 @@ let wasmSetRandomSeed = null;
 
 // Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
 if (typeof createLoopCourseModule === 'function') {
-  const wasmVersion = "20260603_v15";
+  const wasmVersion = "20260614_v30";
   createLoopCourseModule({
     locateFile: function(path, prefix) {
       if (path.endsWith('.wasm')) {
@@ -592,67 +592,13 @@ class LoopCourseGenerator {
     }
 
     console.log("WebAssembly not ready. Falling back to JavaScript engine.");
-    // Step 1: Generate a random loop and corresponding clues
-    let { cells, loopEdges } = this.generateRandomLoop();
-    let originalClues = this.calculateClues(cells);
     
-    // Copy clues for editing
-    const clues = originalClues.map(row => [...row]);
-    
-    // Step 2: Minimize clues while keeping solution unique
-    // Create a list of cell coordinates
-    const cellCoords = [];
-    for (let r = 0; r < this.rows; r++) {
-      for (let c = 0; c < this.cols; c++) {
-        cellCoords.push([r, c]);
-      }
-    }
-    
-    // Shuffle the cell coordinates first for randomness within groups
-    for (let i = cellCoords.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [cellCoords[i], cellCoords[j]] = [cellCoords[j], cellCoords[i]];
-    }
-    
-    // Sort cell coordinates by Block ID first (spatial partitioning), then by clue priority:
-    cellCoords.sort((a, b) => {
-      const [rA, cA] = a;
-      const [rB, cB] = b;
-      
-      const blockSI = 8;
-      const blockIdA = Math.floor(rA / blockSI) * 100 + Math.floor(cA / blockSI);
-      const blockIdB = Math.floor(rB / blockSI) * 100 + Math.floor(cB / blockSI);
-      
-      if (blockIdA !== blockIdB) {
-        return blockIdA - blockIdB;
-      }
-      
-      const clueA = originalClues[rA][cA];
-      const clueB = originalClues[rB][cB];
-      
-      const getPriority = (clue) => {
-        if (clue === 0) return 0; // Hide first!
-        if (clue === 3) return 2; // Keep last!
-        return 1; // 1 and 2
-      };
-      
-      return getPriority(clueA) - getPriority(clueB);
-    });
-    
-    // Adjust target parameters based on difficulty
-    let keepRatio = 0.52; // Default for easy
-    if (difficulty === 'medium') keepRatio = 0.42;
-    if (difficulty === 'hard') keepRatio = 0.22;
-    if (difficulty === 'expert') keepRatio = 0.15; // Expert: 15% remaining clues
-    
-    const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
-    let currentClueCount = this.rows * this.cols;
-    
-    const isLargeBoard = this.rows * this.cols > 150;
+    let cells, loopEdges, originalClues;
+    let clues;
     
     let debugTimeoutCount = 0;
     let debugContradictionCount = 0;
-    
+
     // Fast logical solvability checker
     const checkSolvability = () => {
       const solver = new LoopCourseSolver(this.rows, this.cols, clues);
@@ -697,6 +643,82 @@ class LoopCourseGenerator {
       
       return isUnique;
     };
+
+    // Step 1: Generate a random solved loop and calculate target clues until initial board is solvable
+    let initSolvable = false;
+    let generateAttempts = 0;
+    while (!initSolvable && generateAttempts < 100) {
+      generateAttempts++;
+      const res = this.generateRandomLoop();
+      cells = res.cells;
+      loopEdges = res.loopEdges;
+      originalClues = this.calculateClues(cells);
+      
+      clues = originalClues.map(row => [...row]);
+      initSolvable = checkSolvability();
+    }
+    
+    // Step 2: Minimize clues while keeping solution unique
+    // Create a list of cell coordinates
+    const cellCoords = [];
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        cellCoords.push([r, c]);
+      }
+    }
+    
+    // Shuffle the cell coordinates first for randomness within groups
+    for (let i = cellCoords.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [cellCoords[i], cellCoords[j]] = [cellCoords[j], cellCoords[i]];
+    }
+    
+    // Sort cell coordinates by Block ID first (spatial partitioning), then by clue priority:
+    cellCoords.sort((a, b) => {
+      const [rA, cA] = a;
+      const [rB, cB] = b;
+      
+      const blockSI = 8;
+      const blockIdA = Math.floor(rA / blockSI) * 100 + Math.floor(cA / blockSI);
+      const blockIdB = Math.floor(rB / blockSI) * 100 + Math.floor(cB / blockSI);
+      
+      if (blockIdA !== blockIdB) {
+        return blockIdA - blockIdB;
+      }
+      
+      const getPriority = (r, c) => {
+        const clue = originalClues[r][c];
+        if (clue === 1 || clue === 2) return 0; // Hide first!
+        if (clue === 0) {
+          const dr = [-1, 1, 0, 0];
+          const dc = [0, 0, -1, 1];
+          for (let i = 0; i < 4; i++) {
+            const nr = r + dr[i];
+            const nc = c + dc[i];
+            if (nr >= 0 && nr < this.rows && nc >= 0 && nc < this.cols) {
+              if (originalClues[nr][nc] === 0) {
+                return 0; // Prioritize hiding adjacent 0s first!
+              }
+            }
+          }
+          return 1; // Hide second!
+        }
+        return 2; // 3 (Keep last!)
+      };
+      
+      return getPriority(rA, cA) - getPriority(rB, cB);
+    });
+    
+    // Adjust target parameters based on difficulty
+    let keepRatio = 0.52; // Default for easy
+    if (difficulty === 'medium') keepRatio = 0.42;
+    if (difficulty === 'hard') keepRatio = 0.22;
+    if (difficulty === 'expert') keepRatio = 0.15; // Expert: 15% remaining clues
+    
+    const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
+    let currentClueCount = this.rows * this.cols;
+    
+    const isLargeBoard = this.rows * this.cols > 150;
 
     // Pass 3: Individual Fine-tuning (size 1)
     const remainingCoordsAfterPass1 = [];

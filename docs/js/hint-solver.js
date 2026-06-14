@@ -1435,6 +1435,90 @@ class LoopCourseHintSolver {
     return hints;
   }
 
+  // --- RULE 29: 斜めに対角に隣り合う1と1の外側2×の伝播定石 (Diagonal 1s Outside Crosses) ---
+  checkDiagonal1sOutsideCrosses() {
+    const hints = [];
+
+    for (let r = 0; r < this.rows - 1; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.clues[r][c] !== 1) continue;
+
+        // We check two diagonal directions: Bottom-Right and Bottom-Left
+        
+        // Case 1: Bottom-Right neighbor (r+1, c+1) is also 1
+        if (c + 1 < this.cols && this.clues[r + 1][c + 1] === 1) {
+          const A_outer = [this.getHEdgeIndex(r, c), this.getVEdgeIndex(r, c)]; // TL of A
+          const B_outer = [this.getHEdgeIndex(r + 2, c + 1), this.getVEdgeIndex(r + 1, c + 2)]; // BR of B
+          
+          const A_has_crosses = A_outer[0] !== -1 && A_outer[1] !== -1 &&
+                                this.edgeStates[A_outer[0]] === -1 && this.edgeStates[A_outer[1]] === -1;
+          if (A_has_crosses) {
+            for (const edgeIdx of B_outer) {
+              if (edgeIdx !== -1 && this.edgeStates[edgeIdx] === 0) {
+                hints.push({
+                  edgeIdx,
+                  state: -1,
+                  reason: `斜めに並んだ1と1において、片方の外側2辺が×であるため、もう片方の外側2辺も×になります。`
+                });
+              }
+            }
+          }
+
+          const B_has_crosses = B_outer[0] !== -1 && B_outer[1] !== -1 &&
+                                this.edgeStates[B_outer[0]] === -1 && this.edgeStates[B_outer[1]] === -1;
+          if (B_has_crosses) {
+            for (const edgeIdx of A_outer) {
+              if (edgeIdx !== -1 && this.edgeStates[edgeIdx] === 0) {
+                hints.push({
+                  edgeIdx,
+                  state: -1,
+                  reason: `斜めに並んだ1と1において、片方の外側2辺が×であるため、もう片方の外側2辺も×になります。`
+                });
+              }
+            }
+          }
+        }
+
+        // Case 2: Bottom-Left neighbor (r+1, c-1) is also 1
+        if (c - 1 >= 0 && this.clues[r + 1][c - 1] === 1) {
+          const A_outer = [this.getHEdgeIndex(r, c), this.getVEdgeIndex(r, c + 1)]; // TR of A
+          const B_outer = [this.getHEdgeIndex(r + 2, c - 1), this.getVEdgeIndex(r + 1, c - 1)]; // BL of B
+
+          const A_has_crosses = A_outer[0] !== -1 && A_outer[1] !== -1 &&
+                                this.edgeStates[A_outer[0]] === -1 && this.edgeStates[A_outer[1]] === -1;
+          if (A_has_crosses) {
+            for (const edgeIdx of B_outer) {
+              if (edgeIdx !== -1 && this.edgeStates[edgeIdx] === 0) {
+                hints.push({
+                  edgeIdx,
+                  state: -1,
+                  reason: `斜めに並んだ1と1において、片方の外側2辺が×であるため、もう片方の外側2辺も×になります。`
+                });
+              }
+            }
+          }
+
+          const B_has_crosses = B_outer[0] !== -1 && B_outer[1] !== -1 &&
+                                this.edgeStates[B_outer[0]] === -1 && this.edgeStates[B_outer[1]] === -1;
+          if (B_has_crosses) {
+            for (const edgeIdx of A_outer) {
+              if (edgeIdx !== -1 && this.edgeStates[edgeIdx] === 0) {
+                hints.push({
+                  edgeIdx,
+                  state: -1,
+                  reason: `斜めに並んだ1と1において、片方の外側2辺が×であるため、もう片方の外側2辺も×になります。`
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return hints;
+  }
+
+
 
   // --- RULE 16: 1の角の外側にxが2つある場合の定石 (1 Corner Outside Crosses) ---
   check1CornerOutsideCrosses() {
@@ -2285,37 +2369,6 @@ class LoopCourseHintSolver {
       return true;
     };
 
-    // --- PHASE 1: SEARCH FOR LINE HINTS (state === 1) ---
-    const lineRules = [
-      () => solver.checkCorner3(),
-      () => solver.checkCorner2(),
-      () => solver.checkCellConstraints(),
-      () => solver.checkAdjacent3s(),
-      () => solver.checkDiagonal3s(),
-      () => solver.checkDiagonal323(),
-      () => solver.check3CornerOutsideCrosses(),
-      () => solver.check2CornerOutsideCrosses(),
-      () => solver.check3OppositeLineFromTwoLines(),
-      () => solver.checkAdjacent1sLinePropagation(),
-      () => solver.checkAdjacent3And1WithOutsideCross(),
-      () => solver.check2CornerLineCrossWithDiagonal3(),
-      () => solver.check1CornerCrossesOppositeOutsideCross(),
-      () => solver.check2CornerOutsidePropagation(),
-      () => solver.check3CornerLineEntry(),
-      () => solver.check3AdjacentTo0(),
-      () => solver.checkDotConstraints(),
-      () => solver.check2OppositeLineFromLineCross(),
-      () => solver.checkAdjacent3sWith2()
-    ];
-
-    for (const rule of lineRules) {
-      const candidates = rule();
-      const lineCandidates = candidates.filter(h => h.state === 1 && isSafe(h.edgeIdx, 1));
-      if (lineCandidates.length > 0) {
-        return lineCandidates[0]; // Return the first line hint
-      }
-    }
-
     // --- SPECIAL CROSS-PHASE: AUTO-FILL ALL OBVIOUS CROSSES AT ONCE ---
     if (allowMulti) {
       const obviousCrosses = [];
@@ -2358,6 +2411,37 @@ class LoopCourseHintSolver {
       }
     }
 
+    // --- PHASE 1: SEARCH FOR LINE HINTS (state === 1) ---
+    const lineRules = [
+      () => solver.checkCorner3(),
+      () => solver.checkCorner2(),
+      () => solver.checkCellConstraints(),
+      () => solver.checkAdjacent3s(),
+      () => solver.checkDiagonal3s(),
+      () => solver.checkDiagonal323(),
+      () => solver.check3CornerOutsideCrosses(),
+      () => solver.check2CornerOutsideCrosses(),
+      () => solver.check3OppositeLineFromTwoLines(),
+      () => solver.checkAdjacent1sLinePropagation(),
+      () => solver.checkAdjacent3And1WithOutsideCross(),
+      () => solver.check2CornerLineCrossWithDiagonal3(),
+      () => solver.check1CornerCrossesOppositeOutsideCross(),
+      () => solver.check2CornerOutsidePropagation(),
+      () => solver.check3CornerLineEntry(),
+      () => solver.check3AdjacentTo0(),
+      () => solver.checkDotConstraints(),
+      () => solver.check2OppositeLineFromLineCross(),
+      () => solver.checkAdjacent3sWith2()
+    ];
+
+    for (const rule of lineRules) {
+      const candidates = rule();
+      const lineCandidates = candidates.filter(h => h.state === 1 && isSafe(h.edgeIdx, 1));
+      if (lineCandidates.length > 0) {
+        return lineCandidates[0]; // Return the first line hint
+      }
+    }
+
     // --- PHASE 2: SEARCH FOR CROSS HINTS (state === -1) ---
     const crossRules = [
       () => solver.checkAround0(),
@@ -2372,6 +2456,7 @@ class LoopCourseHintSolver {
       () => solver.check1CornerLineEntry(),
       () => solver.checkAdjacent3And1WithOutsideCross(),
       () => solver.check3CornerLinesWithDiagonal1(),
+      () => solver.checkDiagonal1sOutsideCrosses(),
       () => solver.check2CornerOutsidePropagation(),
       () => solver.checkCellConstraints(),
       () => solver.checkDotConstraints(),

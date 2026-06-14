@@ -2,7 +2,7 @@
 // Prevents UI thread blocking and browser freeze dialogs.
 
 // Import dependencies using absolute or relative paths with cache-busters
-importScripts("loopcourse.js?v=20260603_v15", "solver.js?v=20260603_v15", "generator.js?v=20260603_v15");
+importScripts("loopcourse.js?v=20260614_v30", "solver.js?v=20260614_v30", "generator.js?v=20260614_v30");
 
 self.onmessage = function(e) {
   const { rows, cols, difficulty } = e.data;
