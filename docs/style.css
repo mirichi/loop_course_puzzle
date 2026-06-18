@@ -84,7 +84,7 @@ body {
 /* Main Layout Grid */
 .game-layout {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 340px minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }
@@ -226,6 +226,8 @@ select:focus {
 .status-item {
   font-size: 0.85rem;
   color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
 }
 
 .status-item.loading {
@@ -279,18 +281,26 @@ select:focus {
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.04);
   padding: 10px;
-  overflow: auto;
+  overflow: hidden; /* Prevent scrollbars and clip zoomed SVG */
+  position: relative;
+  width: 100%;
   max-width: 100%;
+  height: calc(100vh - 280px); /* Taller dynamic height on PC to utilize screen space */
+  min-height: 500px;
+  max-height: 1000px; /* Expanded limit on PC */
+  touch-action: none; /* Disable default browser touch actions in container */
 }
 
 #game-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
   display: block;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
-  max-width: 100%;
-  height: auto;
-  will-change: transform; /* Hardware accelerate scaling/zooming on mobile GPU */
+  transform-origin: 0 0; /* Important for scaling/positioning from top-left */
+  touch-action: none; /* Disable default browser touch actions on SVG */
 }
 
 /* Grid Dots */
@@ -390,7 +400,7 @@ select:focus {
 .action-toolbar {
   width: 100%;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   gap: 16px;
   background: rgba(10, 13, 20, 0.5);
@@ -564,7 +574,7 @@ select:focus {
 /* Responsive Rules */
 @media (max-width: 900px) {
   .game-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   
   .control-panel {
@@ -574,6 +584,12 @@ select:focus {
   .board-area {
     order: 1;
     min-height: auto;
+  }
+
+  .svg-container {
+    height: 58vh;
+    min-height: 320px;
+    max-height: 500px;
   }
   
   .action-toolbar {
@@ -588,6 +604,8 @@ select:focus {
   
   .tool-group, .history-group {
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
   }
 }
 
@@ -665,7 +683,8 @@ select:focus {
   .tool-group, .history-group {
     gap: 8px;
     width: 100%;
-    justify-content: space-around;
+    justify-content: center;
+    flex-wrap: wrap;
   }
   
   .action-toolbar {
@@ -720,4 +739,34 @@ select:focus {
   color: var(--neon-amber);
   border-color: rgba(245, 158, 11, 0.3);
   box-shadow: 0 0 8px rgba(245, 158, 11, 0.2);
+}
+
+/* PC Screens Layout Optimization (Minimizing margins and gaps) */
+@media (min-width: 901px) {
+  .app-container {
+    padding: 16px 24px;
+    gap: 16px;
+  }
+  
+  .control-panel, .board-area {
+    padding: 16px 20px;
+  }
+  
+  .control-panel {
+    gap: 20px;
+  }
+  
+  .board-area {
+    gap: 16px;
+  }
+  
+  .brand-title {
+    font-size: 2.2rem;
+    margin-bottom: 2px;
+  }
+  
+  .brand-subtitle {
+    font-size: 0.8rem;
+    letter-spacing: 3px;
+  }
 }

@@ -14,7 +14,6 @@ class LoopCourseGame {
     this.currentDragGroup = []; // Accumulates changes during a single drag operation
 
     // UI Interaction states
-    this.activeTool = 'pen'; // 'pen' or 'cross' or 'eraser'
     this.isDragging = false;
     this.dragState = 0; // State being painted: -1, 0, or 1
 
@@ -27,9 +26,19 @@ class LoopCourseGame {
     this.isTouchMode = false;
     this.autoColorEnabled = false;
 
+    // Pan & Zoom state
+    this.zoomScale = 1.0;
+    this.panX = 0;
+    this.panY = 0;
+    this.minZoom = 0.05;
+    this.maxZoom = 4.0;
+    this.hasManuallyAdjusted = false;
+    this.lastContainerW = 0;
+    this.lastContainerH = 0;
+
     // Layout parameters
     this.spacing = 54; // Distance between dots in px
-    this.padding = 30; // Border padding in px
+    this.padding = 60; // Border padding in px
 
     this.initDOM();
     this.startNewGame();
@@ -37,6 +46,7 @@ class LoopCourseGame {
 
   initDOM() {
     this.svg = document.getElementById('game-svg');
+    this.svgContainer = document.querySelector('.svg-container');
     this.timerEl = document.getElementById('timer-value');
     this.statusTextEl = document.getElementById('status-text');
     this.undoBtn = document.getElementById('btn-undo');
@@ -51,6 +61,8 @@ class LoopCourseGame {
     // Global board mousedown: initiate dragging even from empty spaces
     this.svg.addEventListener('mousedown', (e) => {
       if (this.gameCompleted || this.isPaused || this.isTouchMode) return;
+      // Allow left-click (0) for drawing lines and right-click (2) for crosses
+      if (e.button !== 0 && e.button !== 2) return;
       // If we clicked directly on an edge hitbox, let the hitbox handle it (to toggle correctly)
       if (e.target.classList.contains('edge-hitbox')) return;
 
@@ -64,30 +76,14 @@ class LoopCourseGame {
       this.lastSVGY = startSVG.y;
 
       const isRightClick = e.button === 2;
-      if (isRightClick || this.activeTool === 'cross') {
+      if (isRightClick) {
         this.dragState = -1; // Cross
-      } else if (this.activeTool === 'eraser') {
-        this.dragState = 0; // Erase
       } else {
         this.dragState = 1; // Line
       }
     });
 
-    // Detect touch interaction globally to switch to Mobile/Touch mode
-    this.svg.addEventListener('touchstart', () => {
-      this.isTouchMode = true;
-    }, { passive: true });
 
-    // Handle tool switching
-    const toolBtns = document.querySelectorAll('.tool-btn');
-    toolBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        toolBtns.forEach(b => b.classList.remove('active'));
-        const targetBtn = e.currentTarget;
-        targetBtn.classList.add('active');
-        this.activeTool = targetBtn.dataset.tool;
-      });
-    });
 
     // Undo / Redo
     this.undoBtn.addEventListener('click', () => this.undo());
@@ -108,7 +104,7 @@ class LoopCourseGame {
     document.getElementById('btn-hint').addEventListener('click', () => this.giveHint());
     document.getElementById('btn-reset').addEventListener('click', () => this.resetBoard());
 
-    // Keybinds (Z for Undo, Y for Redo, Space to toggle tools)
+    // Keybinds (Z for Undo, Y for Redo)
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'z') {
         e.preventDefault();
@@ -116,12 +112,6 @@ class LoopCourseGame {
       } else if (e.ctrlKey && e.key === 'y') {
         e.preventDefault();
         this.redo();
-      } else if (e.key === '1') {
-        document.querySelector('[data-tool="pen"]').click();
-      } else if (e.key === '2') {
-        document.querySelector('[data-tool="cross"]').click();
-      } else if (e.key === '3') {
-        document.querySelector('[data-tool="eraser"]').click();
       }
     });
 
@@ -152,12 +142,417 @@ class LoopCourseGame {
       }
     });
 
-    // (Touch dragging removed to enable browser default zoom and scroll)
+    // Listeners for view reset and resizing
+    const resetViewBtn = document.getElementById('btn-reset-view');
+    if (resetViewBtn) {
+      resetViewBtn.addEventListener('click', () => {
+        this.hasManuallyAdjusted = false;
+        this.fitBoardToContainer();
+      });
+    }
+    window.addEventListener('resize', () => {
+      if (!this.svgContainer) return;
+      let containerW = this.svgContainer.clientWidth;
+      let containerH = this.svgContainer.clientHeight;
+      if (!containerW || !containerH) {
+        const rect = this.svgContainer.getBoundingClientRect();
+        containerW = rect.width;
+        containerH = rect.height;
+      }
+      if (!containerW) containerW = window.innerWidth > 900 ? window.innerWidth - 400 : window.innerWidth - 48;
+      if (!containerH) containerH = window.innerHeight * 0.6;
+
+      const oldW = this.lastContainerW || containerW;
+      const oldH = this.lastContainerH || containerH;
+      this.lastContainerW = containerW;
+      this.lastContainerH = containerH;
+
+      if (containerW === oldW && containerH === oldH) {
+        return;
+      }
+
+      if (this.hasManuallyAdjusted) {
+        // Just adjust panning to keep center relative to the container resize,
+        // do not reset zoom scale or pan to default.
+        this.panX += (containerW - oldW) / 2;
+        this.panY += (containerH - oldH) / 2;
+        this.updateSVGTransform();
+      } else {
+        this.fitBoardToContainer();
+      }
+    });
+
+    // Initialize custom board pan and zoom
+    this.initPanZoom();
+  }
+
+  initPanZoom() {
+    if (!this.svgContainer) return;
+
+    // Desktop/Mouse Wheel Zoom
+    this.svgContainer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = this.svgContainer.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+
+      const zoomFactor = 1.1;
+      let newScale = this.zoomScale;
+      if (e.deltaY < 0) {
+        newScale *= zoomFactor;
+      } else {
+        newScale /= zoomFactor;
+      }
+      newScale = Math.max(this.minZoom, Math.min(newScale, this.maxZoom));
+
+      const factor = newScale / this.zoomScale;
+      this.panX = px - (px - this.panX) * factor;
+      this.panY = py - (py - this.panY) * factor;
+      this.zoomScale = newScale;
+      this.hasManuallyAdjusted = true;
+
+      this.updateSVGTransform();
+    }, { passive: false });
+
+    // Desktop Mouse Drag Panning
+    let isPanning = false;
+    let startX = 0;
+    let startY = 0;
+
+    this.svgContainer.addEventListener('mousedown', (e) => {
+      if (this.gameCompleted || this.isPaused) return;
+
+      const isMiddleClick = e.button === 1;
+
+      if (isMiddleClick) {
+        isPanning = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        e.preventDefault();
+        this.svgContainer.style.cursor = 'grabbing';
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isPanning) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      this.panX += dx;
+      this.panY += dy;
+      this.hasManuallyAdjusted = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      this.updateSVGTransform();
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (isPanning) {
+        isPanning = false;
+        this.svgContainer.style.cursor = 'default';
+      }
+    });
+
+    // Mobile/Touch zoom, pan and draw controls
+    let touchMode = 'none'; // 'none', 'pinch', 'pan', 'draw', 'maybe_draw'
+    let lastTouchDistance = 0;
+    let lastTouchMidX = 0;
+    let lastTouchMidY = 0;
+    let lastTouchX = 0;
+    let lastTouchY = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchDrawActive = false;
+    let touchDrawState = 1;
+    let touchDrawVisited = new Set();
+    let longPressTimer = null;
+    let startEdgeIdx = null;
+
+    this.svgContainer.addEventListener('touchstart', (e) => {
+      this.isTouchMode = true;
+
+      if (e.touches.length === 2) {
+        // Two-finger pinch zoom
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+        touchMode = 'pinch';
+        touchDrawActive = false;
+        this.currentDragGroup = []; // Cancel any active drawing
+        
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        lastTouchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        lastTouchMidX = (t1.clientX + t2.clientX) / 2;
+        lastTouchMidY = (t1.clientY + t2.clientY) / 2;
+        
+        e.preventDefault();
+      } else if (e.touches.length === 1) {
+        const touch = e.touches[0];
+
+        // Prevent standard browser zoom/scroll/click emulation inside the container
+        e.preventDefault();
+
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        touchMode = 'maybe_draw';
+        touchDrawActive = false;
+
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+        }
+
+        const tapTolerance = Math.min(28, this.spacing * this.zoomScale * 0.45);
+        startEdgeIdx = this.findClosestEdge(touch.clientX, touch.clientY, tapTolerance);
+
+        longPressTimer = setTimeout(() => {
+          if (touchMode === 'maybe_draw') {
+            touchMode = 'draw';
+            touchDrawActive = true;
+            touchDrawVisited = new Set();
+            this.currentDragGroup = [];
+
+            if (navigator.vibrate) {
+              navigator.vibrate(40);
+            }
+
+            if (startEdgeIdx !== null) {
+              const currentState = this.edgeStates[startEdgeIdx];
+
+              if (currentState === 1) {
+                touchDrawState = 0; // Erase lines/crosses
+              } else if (currentState === -1) {
+                touchDrawState = -1; // Draw crosses
+              } else {
+                touchDrawState = 1; // Draw lines
+              }
+
+              this.isDragging = true;
+              this.dragState = touchDrawState;
+              this.applyEdgeStateChange(startEdgeIdx, touchDrawState);
+              touchDrawVisited.add(startEdgeIdx);
+            } else {
+              touchDrawState = 1; // Default to line
+              this.isDragging = true;
+              this.dragState = touchDrawState;
+            }
+
+            this.lastMouseX = touch.clientX;
+            this.lastMouseY = touch.clientY;
+            this.mouseHistory = [{ x: touch.clientX, y: touch.clientY, time: Date.now() }];
+            const startSVG = this.getSVGCoords(touch.clientX, touch.clientY);
+            this.lastSVGX = startSVG.x;
+            this.lastSVGY = startSVG.y;
+          }
+        }, 300);
+      }
+    }, { passive: false });
+
+    this.svgContainer.addEventListener('touchmove', (e) => {
+      if (this.gameCompleted || this.isPaused) return;
+
+      if (touchMode === 'pinch' && e.touches.length === 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+
+        const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+
+        let factor = dist / lastTouchDistance;
+        let newScale = this.zoomScale * factor;
+        newScale = Math.max(this.minZoom, Math.min(newScale, this.maxZoom));
+
+        const rect = this.svgContainer.getBoundingClientRect();
+        const px = midX - rect.left;
+        const py = midY - rect.top;
+
+        const scaleFactor = newScale / this.zoomScale;
+        this.panX = px - (px - this.panX) * scaleFactor;
+        this.panY = py - (py - this.panY) * scaleFactor;
+        this.zoomScale = newScale;
+
+        this.panX += (midX - lastTouchMidX);
+        this.panY += (midY - lastTouchMidY);
+        this.hasManuallyAdjusted = true;
+
+        lastTouchDistance = dist;
+        lastTouchMidX = midX;
+        lastTouchMidY = midY;
+
+        this.updateSVGTransform();
+      } else if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        const dist = Math.hypot(dx, dy);
+
+        if (touchMode === 'maybe_draw') {
+          // If we move before the long press timer fires, switch to panning!
+          if (dist > 8) {
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+            touchMode = 'pan';
+            lastTouchX = touch.clientX;
+            lastTouchY = touch.clientY;
+          }
+        }
+
+        if (touchMode === 'pan') {
+          e.preventDefault();
+          const panDx = touch.clientX - lastTouchX;
+          const panDy = touch.clientY - lastTouchY;
+
+          this.panX += panDx;
+          this.panY += panDy;
+          this.hasManuallyAdjusted = true;
+
+          lastTouchX = touch.clientX;
+          lastTouchY = touch.clientY;
+
+          this.updateSVGTransform();
+        } else if (touchMode === 'draw' && touchDrawActive) {
+          e.preventDefault();
+
+          if (!this.mouseHistory) this.mouseHistory = [];
+          this.mouseHistory.push({ x: touch.clientX, y: touch.clientY, time: Date.now() });
+          if (this.mouseHistory.length > 40) {
+            this.mouseHistory.shift();
+          }
+
+          // Use fuzzy edge matching for drawing during dragging
+          const dragTolerance = Math.min(24, this.spacing * this.zoomScale * 0.4);
+          const edgeIdx = this.findClosestEdge(touch.clientX, touch.clientY, dragTolerance);
+          if (edgeIdx !== null) {
+            if (!touchDrawVisited.has(edgeIdx)) {
+              touchDrawVisited.add(edgeIdx);
+              this.isDragging = true;
+              this.dragState = touchDrawState;
+              this.handleEdgeDragEnter(edgeIdx, touch.clientX, touch.clientY);
+            }
+          }
+
+          this.lastMouseX = touch.clientX;
+          this.lastMouseY = touch.clientY;
+
+          const localCoords = this.getSVGCoords(touch.clientX, touch.clientY);
+          this.lastSVGX = localCoords.x;
+          this.lastSVGY = localCoords.y;
+        }
+      }
+    }, { passive: false });
+
+    const handleTouchEnd = (e) => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+
+      if (touchMode === 'maybe_draw') {
+        if (startEdgeIdx !== null) {
+          e.preventDefault(); // Cancel emulated click/mousedown to prevent double trigger!
+          this.handleEdgeClickTouch(startEdgeIdx);
+        }
+      } else if (touchMode === 'draw' && touchDrawActive) {
+        touchDrawActive = false;
+        this.isDragging = false;
+        this.mouseHistory = [];
+
+        if (this.currentDragGroup.length > 0) {
+          this.undoStack.push(this.currentDragGroup);
+          this.redoStack = [];
+          this.currentDragGroup = [];
+          this.updateUndoRedoButtons();
+          this.checkWinCondition();
+        }
+      }
+      touchMode = 'none';
+    };
+
+    this.svgContainer.addEventListener('touchend', handleTouchEnd, { passive: false });
+    this.svgContainer.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+  }
+
+  clampPanCoordinates() {
+    if (!this.svgContainer) return;
+    let containerW = this.svgContainer.clientWidth;
+    let containerH = this.svgContainer.clientHeight;
+    
+    if (!containerW || !containerH) {
+      const rect = this.svgContainer.getBoundingClientRect();
+      containerW = rect.width;
+      containerH = rect.height;
+    }
+    if (!containerW) containerW = window.innerWidth > 900 ? window.innerWidth - 400 : window.innerWidth - 48;
+    if (!containerH) containerH = window.innerHeight * 0.6;
+
+    const svgW = this.cols * this.spacing + this.padding * 2;
+    const svgH = this.rows * this.spacing + this.padding * 2;
+
+    const boardW = svgW * this.zoomScale;
+    const boardH = svgH * this.zoomScale;
+
+    const minX = Math.min(0, containerW - boardW);
+    const maxX = Math.max(0, containerW - boardW);
+    const minY = Math.min(0, containerH - boardH);
+    const maxY = Math.max(0, containerH - boardH);
+
+    this.panX = Math.max(minX, Math.min(this.panX, maxX));
+    this.panY = Math.max(minY, Math.min(this.panY, maxY));
+  }
+
+  updateSVGTransform() {
+    this.clampPanCoordinates();
+    const baseW = this.cols * this.spacing + this.padding * 2;
+    const baseH = this.rows * this.spacing + this.padding * 2;
+    this.svg.style.width = `${baseW * this.zoomScale}px`;
+    this.svg.style.height = `${baseH * this.zoomScale}px`;
+    this.svg.style.transform = `translate(${this.panX}px, ${this.panY}px)`;
+  }
+
+  fitBoardToContainer() {
+    if (!this.svgContainer) return;
+    let containerW = this.svgContainer.clientWidth;
+    let containerH = this.svgContainer.clientHeight;
+    
+    // Fallbacks if clientWidth/clientHeight are not ready (e.g. initial render)
+    if (!containerW || !containerH) {
+      const rect = this.svgContainer.getBoundingClientRect();
+      containerW = rect.width;
+      containerH = rect.height;
+    }
+    // Hard fallbacks to prevent returning early with zero values
+    if (!containerW) containerW = window.innerWidth > 900 ? window.innerWidth - 400 : window.innerWidth - 48;
+    if (!containerH) containerH = window.innerHeight * 0.6;
+
+    const svgW = this.cols * this.spacing + this.padding * 2;
+    const svgH = this.rows * this.spacing + this.padding * 2;
+
+    // Use 0.95 margin ratio to minimize unnecessary empty spaces around the board
+    const scaleX = (containerW * 0.95) / svgW;
+    const scaleY = (containerH * 0.95) / svgH;
+    const scale = Math.min(scaleX, scaleY);
+
+    // Initial zoom fits the container completely by clamping only to this.minZoom.
+    // Allow scaling up to 4.0 for nice large display on wide screens.
+    this.zoomScale = Math.max(this.minZoom, Math.min(scale, 4.0));
+    
+    this.panX = (containerW - svgW * this.zoomScale) / 2;
+    this.panY = (containerH - svgH * this.zoomScale) / 2;
+
+    this.lastContainerW = containerW;
+    this.lastContainerH = containerH;
+
+    this.updateSVGTransform();
   }
 
   startNewGame() {
     this.gameCompleted = false;
     this.resetHintFailedState();
+    this.hasManuallyAdjusted = false;
     document.getElementById('victory-modal').classList.remove('active');
 
     // Read current settings
@@ -373,42 +768,13 @@ class LoopCourseGame {
       hitbox.setAttribute('class', 'edge-hitbox');
       hitbox.dataset.edgeIdx = edgeIdx;
 
-      // Touch coordinates tracking for fast mobile taps without 300ms delay
-      let touchStartX = 0;
-      let touchStartY = 0;
-      let touchStartTime = 0;
-
-      hitbox.addEventListener('touchstart', (e) => {
-        this.isTouchMode = true;
-        const touch = e.changedTouches[0];
-        touchStartX = touch.clientX;
-        touchStartY = touch.clientY;
-        touchStartTime = Date.now();
-      }, { passive: true });
-
-      hitbox.addEventListener('touchend', (e) => {
-        if (!this.isTouchMode) return;
-        const touch = e.changedTouches[0];
-        const dx = touch.clientX - touchStartX;
-        const dy = touch.clientY - touchStartY;
-        const dist = Math.hypot(dx, dy);
-        const elapsed = Date.now() - touchStartTime;
-
-        // If movement is negligible and duration is fast, it's a deliberate tap.
-        // Process instantly and cancel emulated mouse events to bypass 300ms delay.
-        if (dist < 6 && elapsed < 300) {
-          e.preventDefault();
-          this.handleEdgeClickTouch(edgeIdx);
-        }
-      }, { passive: false });
-
       // Event listeners for dragging / clicking (PC Mouse / Fallback)
       hitbox.addEventListener('mousedown', (e) => {
-        if (this.isTouchMode) return; // Ignore on touch screens to allow default scroll/zoom
+        if (this.isTouchMode) return; // Ignore on touch screens
         this.handleEdgeMouseDown(e, edgeIdx);
       });
       hitbox.addEventListener('mouseenter', (e) => {
-        if (this.isTouchMode) return; // Ignore on touch screens to allow default scroll/zoom
+        if (this.isTouchMode) return; // Ignore on touch screens
         this.handleEdgeDragEnter(edgeIdx, e.clientX, e.clientY);
       });
       // Block right click context menu on the grid
@@ -461,6 +827,7 @@ class LoopCourseGame {
 
     // Initialize clue satisfying highlight
     this.updateCluesHighlight();
+    this.fitBoardToContainer();
   }
 
   updateEdgeUI(edgeIdx) {
@@ -650,6 +1017,9 @@ class LoopCourseGame {
   handleEdgeMouseDown(e, edgeIdx) {
     if (this.gameCompleted || this.isPaused) return;
 
+    // Only allow left click (0) and right click (2) for drawing
+    if (e.button !== 0 && e.button !== 2) return;
+
     this.isDragging = true;
     this.lastMouseX = e.clientX;
     this.lastMouseY = e.clientY;
@@ -659,16 +1029,14 @@ class LoopCourseGame {
     this.lastSVGX = startSVG.x;
     this.lastSVGY = startSVG.y;
 
-    // Determine target state based on mouse button and active tools
+    // Determine target state based on mouse button
     const isRightClick = e.button === 2;
     const currentState = this.edgeStates[edgeIdx];
 
-    if (isRightClick || this.activeTool === 'cross') {
+    if (isRightClick) {
       this.dragState = (currentState === -1) ? 0 : -1;
-    } else if (this.activeTool === 'eraser') {
-      this.dragState = 0;
     } else {
-      // Pen tool (normal left click)
+      // Left click
       this.dragState = (currentState === 1) ? 0 : 1;
     }
 
@@ -681,27 +1049,13 @@ class LoopCourseGame {
     const currentState = this.edgeStates[edgeIdx];
     let newState = 0;
 
-    if (this.activeTool === 'cross') {
-      // Cycle: Empty (0) -> Cross (-1) -> Line (1) -> Empty (0)
-      if (currentState === 0) {
-        newState = -1;
-      } else if (currentState === -1) {
-        newState = 1;
-      } else {
-        newState = 0;
-      }
-    } else if (this.activeTool === 'eraser') {
-      // Cycle: Any -> Empty (0)
-      newState = 0;
+    // Cycle: Empty (0) -> Line (1) -> Cross (-1) -> Empty (0)
+    if (currentState === 0) {
+      newState = 1;
+    } else if (currentState === 1) {
+      newState = -1;
     } else {
-      // Cycle: Empty (0) -> Line (1) -> Cross (-1) -> Empty (0)
-      if (currentState === 0) {
-        newState = 1;
-      } else if (currentState === 1) {
-        newState = -1;
-      } else {
-        newState = 0;
-      }
+      newState = 0;
     }
 
     if (currentState === newState) return; // No change
@@ -849,6 +1203,74 @@ class LoopCourseGame {
       return pt.matrixTransform(ctm.inverse());
     }
     return { x: clientX, y: clientY }; // Fallback if CTM is not ready
+  }
+
+  findClosestEdge(clientX, clientY, maxDistance = 28) {
+    if (!this.svg) return null;
+    const ctm = this.svg.getScreenCTM();
+    if (!ctm) return null;
+
+    const svgCoords = this.getSVGCoords(clientX, clientY);
+    const sx = svgCoords.x;
+    const sy = svgCoords.y;
+
+    const cCenter = Math.floor((sx - this.padding) / this.spacing);
+    const rCenter = Math.floor((sy - this.padding) / this.spacing);
+
+    const candidateEdges = new Set();
+    const range = 2; // Check 2 cells radius around the touch point
+    for (let r = rCenter - range; r <= rCenter + range; r++) {
+      for (let c = cCenter - range; c <= cCenter + range; c++) {
+        // Horizontal top/bottom
+        const hTop = this.getHEdgeIndex(r, c);
+        if (hTop !== -1) candidateEdges.add(hTop);
+        const hBot = this.getHEdgeIndex(r + 1, c);
+        if (hBot !== -1) candidateEdges.add(hBot);
+        
+        // Vertical left/right
+        const vLeft = this.getVEdgeIndex(r, c);
+        if (vLeft !== -1) candidateEdges.add(vLeft);
+        const vRight = this.getVEdgeIndex(r, c + 1);
+        if (vRight !== -1) candidateEdges.add(vRight);
+      }
+    }
+
+    let closestEdgeIdx = null;
+    let minDistance = Infinity;
+
+    for (const edgeIdx of candidateEdges) {
+      const coords = this.getEdgeCoords(edgeIdx);
+      if (!coords) continue;
+
+      // Map SVG coords to screen/client space using CTM
+      const ex1 = coords.x1 * ctm.a + coords.y1 * ctm.c + ctm.e;
+      const ey1 = coords.x1 * ctm.b + coords.y1 * ctm.d + ctm.f;
+      const ex2 = coords.x2 * ctm.a + coords.y2 * ctm.c + ctm.e;
+      const ey2 = coords.x2 * ctm.b + coords.y2 * ctm.d + ctm.f;
+
+      // Distance from clientX, clientY to segment (ex1, ey1) -> (ex2, ey2)
+      const dx = ex2 - ex1;
+      const dy = ey2 - ey1;
+      const l2 = dx * dx + dy * dy;
+      let dist;
+      if (l2 === 0) {
+        dist = Math.hypot(clientX - ex1, clientY - ey1);
+      } else {
+        let t = ((clientX - ex1) * dx + (clientY - ey1) * dy) / l2;
+        t = Math.max(0, Math.min(1, t));
+        dist = Math.hypot(clientX - (ex1 + t * dx), clientY - (ey1 + t * dy));
+      }
+
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestEdgeIdx = edgeIdx;
+      }
+    }
+
+    if (minDistance <= maxDistance) {
+      return closestEdgeIdx;
+    }
+    return null;
   }
 
   getEdgeCoords(edgeIdx) {

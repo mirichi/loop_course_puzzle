@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>ループコースパズル - 極上のネオン・ループパズル</title>
   <meta name="description" content="無限に問題自動生成ができる、美しくスタイリッシュなループコースパズルゲーム。モバイル・PC両対応で快適に遊べます。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -60,11 +60,19 @@
             <li>マスの中の数字は、その周囲4辺のうち<strong>線が引かれる本数</strong>を表します。</li>
             <li>「線が通らない箇所」には、目印として<strong>「×」印</strong>を置くことができます。</li>
             <li>
-              <span class="shortcut-badge">1</span> ペン / 
-              <span class="shortcut-badge">2</span> ×印 / 
-              <span class="shortcut-badge">3</span> 消しゴム<br>
-              <span class="shortcut-badge">Ctrl + Z</span> 元に戻す / 
-              <span class="shortcut-badge">Ctrl + Y</span> やり直す
+              <strong>【PCでの操作】</strong><br>
+              ・左ドラッグ：線を描画<br>
+              ・右ドラッグ：×印を描画<br>
+              ・ホイール回転：拡大・縮小<br>
+              ・中ボタンドラッグ：スクロール移動<br>
+              ・<span class="shortcut-badge">Ctrl + Z</span> 戻す / <span class="shortcut-badge">Ctrl + Y</span> 進む
+            </li>
+            <li>
+              <strong>【スマホでの操作】</strong><br>
+              ・タップ：辺の状態切り替え<br>
+              ・長押しスライド：連続描画<br>
+              ・1本指スライド：スクロール移動<br>
+              ・2本指ピンチ：拡大・縮小
             </li>
           </ul>
         </div>
@@ -92,30 +100,6 @@
 
         <!-- Toolbar for active modes -->
         <div class="action-toolbar">
-          <div class="tool-group">
-            <button class="tool-btn active ripple" data-tool="pen" title="線を引く (キーボード: 1)">
-              <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/>
-              </svg>
-              <span>線引き (1)</span>
-            </button>
-            <button class="tool-btn ripple" data-tool="cross" title="×印を置く (キーボード: 2)">
-              <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>
-              </svg>
-              <span>×印 (2)</span>
-            </button>
-            <button class="tool-btn ripple" data-tool="eraser" title="線を消す (キーボード: 3)">
-              <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M16.24 7.76l4.24 4.24c.78.78.78 2.05 0 2.83L15 20H23v-2H16.24zM3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/>
-                <path d="M19.78 12L15 7.22 8.78 13.44l4.78 4.78z" fill="currentColor" opacity="0.3"/>
-              </svg>
-              <span>消去 (3)</span>
-            </button>
-          </div>
-
-          <div class="divider"></div>
-
           <div class="history-group">
             <button id="btn-undo" class="action-btn ripple" title="元に戻す (Ctrl + Z)" disabled>
               <svg viewBox="0 0 24 24" width="20" height="20">
@@ -141,6 +125,12 @@
                 <path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.21-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8s1.5.67 1.5 1.5S7.33 11 6.5 11zm3-3C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3.5 3c-.83 0-1.5-.67-1.5-1.5S17.17 8 18 8s1.5.67 1.5 1.5S18.83 11 18 11z" fill="currentColor"/>
               </svg>
               <span>色塗り</span>
+            </button>
+            <button id="btn-reset-view" class="action-btn ripple" title="盤面の表示をリセット">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M15 3h6v6h-2V6.41l-4.79 4.79-1.42-1.42L17.59 5H15V3zM9 21H3v-6h2v2.59l4.79-4.79 1.42 1.42L6.41 19H9v2z" fill="currentColor"/>
+              </svg>
+              <span>表示リセット</span>
             </button>
             <button id="btn-hint" class="action-btn ripple" title="ヒント (1手自動で埋める)">
               <svg viewBox="0 0 24 24" width="20" height="20">
