@@ -2,7 +2,7 @@
 // Prevents UI thread blocking and browser freeze dialogs.
 
 // Import dependencies using absolute or relative paths with cache-busters
-importScripts("loopcourse.js?v=20260614_v30", "solver.js?v=20260614_v30", "generator.js?v=20260614_v30");
+importScripts("loopcourse.js?v=20260624_v43", "solver.js?v=20260624_v43", "generator.js?v=20260624_v43");
 
 self.onmessage = function(e) {
   const { rows, cols, difficulty } = e.data;
@@ -17,14 +17,26 @@ self.onmessage = function(e) {
     }
     
     try {
+      self.reportProgress = (checked, total) => {
+        self.postMessage({
+          type: 'progress',
+          checked: checked,
+          total: total
+        });
+      };
+
       const generator = new self.LoopCourseGenerator(rows, cols);
-      const puzzle = generator.generate(difficulty);
+      const puzzle = generator.generate(difficulty, (checked, total) => {
+        self.reportProgress(checked, total);
+      });
       
       // Post puzzle results back to main thread
       self.postMessage({
         success: true,
         clues: puzzle.clues,
         solution: puzzle.solution,
+        rows: puzzle.rows,
+        cols: puzzle.cols,
         engineUsed: puzzle.engineUsed
       });
     } catch (err) {

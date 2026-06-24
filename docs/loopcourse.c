@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+#include <time.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -31,6 +32,9 @@ int8_t clues[MAX_CELLS];       // 0-3 cell clues, or -1 for null/empty
 
 // Debug globals
 static const char* dbgSource = "init";
+static int lookaheadConfirmedCount = 0;
+static int lookaheadMaxLimit = 0;
+static bool isDoingLookahead = false;
 static int dbgCell = -1;
 static int dbgDot = -1;
 static int8_t dbgTargetEdges[MAX_EDGES];
@@ -249,10 +253,20 @@ static inline int getDotEdges(int r, int c, int* outEdges) {
 }
 
 static inline bool setEdgeState(int edgeIdx, int8_t state) {
+    if (edgeIdx < 0 || edgeIdx >= numEdges) {
+        printf("[C ERROR] setEdgeState out of bounds: %d (numEdges=%d)\n", edgeIdx, numEdges);
+        return false;
+    }
     if (edgeStates[edgeIdx] == state) return true; // Already set to this state
     if (edgeStates[edgeIdx] != 0) return false;    // Contradiction: edge is already determined to a different state
     
-
+    // Lookahead limit check
+    if (isDoingLookahead && lookaheadMaxLimit > 0 && lookaheadConfirmedCount >= lookaheadMaxLimit) {
+        return true; // Limit reached: treat as success (no contradiction yet)
+    }
+    if (isDoingLookahead && lookaheadMaxLimit > 0) {
+        lookaheadConfirmedCount++;
+    }
     
     if (state == 1) {
         int dotA, dotB;
@@ -414,140 +428,499 @@ static inline void clearQueues() {
     memset(dotInQueue, 0, sizeof(dotInQueue));
 }
 
+static bool applyStaticRules() {
+    dbgSource = "static_rules";
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int clue = clues[r * cols + c];
+            if (clue == -1) continue;
+            
+            // Rule 2.4: Corner Clue Constraints
+            bool isTop = (r == 0);
+            bool isBottom = (r == rows - 1);
+            bool isLeft = (c == 0);
+            bool isRight = (c == cols - 1);
+            
+            if (isTop && isLeft) {
+                int t = getHEdgeIndex(0, 0);
+                int l = getVEdgeIndex(0, 0);
+                if (clue == 3) {
+                    if (!setEdgeState(t, 1)) return false;
+                    if (!setEdgeState(l, 1)) return false;
+                } else if (clue == 1) {
+                    if (!setEdgeState(t, -1)) return false;
+                    if (!setEdgeState(l, -1)) return false;
+                }
+            }
+            if (isTop && isRight) {
+                int t = getHEdgeIndex(0, cols - 1);
+                int l = getVEdgeIndex(0, cols);
+                if (clue == 3) {
+                    if (!setEdgeState(t, 1)) return false;
+                    if (!setEdgeState(l, 1)) return false;
+                } else if (clue == 1) {
+                    if (!setEdgeState(t, -1)) return false;
+                    if (!setEdgeState(l, -1)) return false;
+                }
+            }
+            if (isBottom && isLeft) {
+                int t = getHEdgeIndex(rows, 0);
+                int l = getVEdgeIndex(rows - 1, 0);
+                if (clue == 3) {
+                    if (!setEdgeState(t, 1)) return false;
+                    if (!setEdgeState(l, 1)) return false;
+                } else if (clue == 1) {
+                    if (!setEdgeState(t, -1)) return false;
+                    if (!setEdgeState(l, -1)) return false;
+                }
+            }
+            if (isBottom && isRight) {
+                int t = getHEdgeIndex(rows, cols - 1);
+                int l = getVEdgeIndex(rows - 1, cols);
+                if (clue == 3) {
+                    if (!setEdgeState(t, 1)) return false;
+                    if (!setEdgeState(l, 1)) return false;
+                } else if (clue == 1) {
+                    if (!setEdgeState(t, -1)) return false;
+                    if (!setEdgeState(l, -1)) return false;
+                }
+            }
+            
+            // Rule 2.1: Orthogonally Adjacent 3-3 Cells
+            if (clue == 3) {
+                if (c + 1 < cols && clues[r * cols + (c + 1)] == 3) {
+                    int shared = getVEdgeIndex(r, c + 1);
+                    int outerL = getVEdgeIndex(r, c);
+                    int outerR = getVEdgeIndex(r, c + 2);
+                    if (!setEdgeState(shared, 1)) return false;
+                    if (!setEdgeState(outerL, 1)) return false;
+                    if (!setEdgeState(outerR, 1)) return false;
+                }
+                if (r + 1 < rows && clues[(r + 1) * cols + c] == 3) {
+                    int shared = getHEdgeIndex(r + 1, c);
+                    int outerT = getHEdgeIndex(r, c);
+                    int outerB = getHEdgeIndex(r + 2, c);
+                    if (!setEdgeState(shared, 1)) return false;
+                    if (!setEdgeState(outerT, 1)) return false;
+                    if (!setEdgeState(outerB, 1)) return false;
+                }
+            }
+            
+            // Rule 2.2: Diagonally Adjacent 3-3 Cells
+            if (clue == 3) {
+                if (r + 1 < rows && c + 1 < cols && clues[(r + 1) * cols + (c + 1)] == 3) {
+                    int tA = getHEdgeIndex(r, c);
+                    int lA = getVEdgeIndex(r, c);
+                    int bB = getHEdgeIndex(r + 2, c + 1);
+                    int rB = getVEdgeIndex(r + 1, c + 2);
+                    if (!setEdgeState(tA, 1)) return false;
+                    if (!setEdgeState(lA, 1)) return false;
+                    if (!setEdgeState(bB, 1)) return false;
+                    if (!setEdgeState(rB, 1)) return false;
+                }
+                if (r + 1 < rows && c - 1 >= 0 && clues[(r + 1) * cols + (c - 1)] == 3) {
+                    int tA = getHEdgeIndex(r, c);
+                    int rA = getVEdgeIndex(r, c + 1);
+                    int bB = getHEdgeIndex(r + 2, c - 1);
+                    int lB = getVEdgeIndex(r + 1, c - 1);
+                    if (!setEdgeState(tA, 1)) return false;
+                    if (!setEdgeState(rA, 1)) return false;
+                    if (!setEdgeState(bB, 1)) return false;
+                    if (!setEdgeState(lB, 1)) return false;
+                }
+            }
+            
+            // Rule 2.3: 0-3 Orthogonal Adjacency
+            if (clue == 0) {
+                int dr[] = {-1, 1, 0, 0};
+                int dc[] = {0, 0, -1, 1};
+                for (int dir = 0; dir < 4; dir++) {
+                    int nr = r + dr[dir];
+                    int nc = c + dc[dir];
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                        if (clues[nr * cols + nc] == 3) {
+                            int t3 = getHEdgeIndex(nr, nc);
+                            int r3 = getVEdgeIndex(nr, nc + 1);
+                            int b3 = getHEdgeIndex(nr + 1, nc);
+                            int l3 = getVEdgeIndex(nr, nc);
+                            
+                            if (dir == 0) {
+                                if (!setEdgeState(t3, 1)) return false;
+                                if (!setEdgeState(r3, 1)) return false;
+                                if (!setEdgeState(l3, 1)) return false;
+                            } else if (dir == 1) {
+                                if (!setEdgeState(b3, 1)) return false;
+                                if (!setEdgeState(r3, 1)) return false;
+                                if (!setEdgeState(l3, 1)) return false;
+                            } else if (dir == 2) {
+                                if (!setEdgeState(t3, 1)) return false;
+                                if (!setEdgeState(b3, 1)) return false;
+                                if (!setEdgeState(l3, 1)) return false;
+                            } else if (dir == 3) {
+                                if (!setEdgeState(t3, 1)) return false;
+                                if (!setEdgeState(b3, 1)) return false;
+                                if (!setEdgeState(r3, 1)) return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static bool applyCorner2Rules() {
+    if (clues[0] == 2) {
+        int t = getHEdgeIndex(0, 0);
+        int l = getVEdgeIndex(0, 0);
+        if (edgeStates[t] != 0 && edgeStates[l] == 0) {
+            if (!setEdgeState(l, edgeStates[t])) return false;
+        } else if (edgeStates[l] != 0 && edgeStates[t] == 0) {
+            if (!setEdgeState(t, edgeStates[l])) return false;
+        } else if (edgeStates[t] != 0 && edgeStates[l] != 0 && edgeStates[t] != edgeStates[l]) {
+            return false;
+        }
+    }
+    if (clues[cols - 1] == 2) {
+        int t = getHEdgeIndex(0, cols - 1);
+        int l = getVEdgeIndex(0, cols);
+        if (edgeStates[t] != 0 && edgeStates[l] == 0) {
+            if (!setEdgeState(l, edgeStates[t])) return false;
+        } else if (edgeStates[l] != 0 && edgeStates[t] == 0) {
+            if (!setEdgeState(t, edgeStates[l])) return false;
+        } else if (edgeStates[t] != 0 && edgeStates[l] != 0 && edgeStates[t] != edgeStates[l]) {
+            return false;
+        }
+    }
+    if (clues[(rows - 1) * cols] == 2) {
+        int t = getHEdgeIndex(rows, 0);
+        int l = getVEdgeIndex(rows - 1, 0);
+        if (edgeStates[t] != 0 && edgeStates[l] == 0) {
+            if (!setEdgeState(l, edgeStates[t])) return false;
+        } else if (edgeStates[l] != 0 && edgeStates[t] == 0) {
+            if (!setEdgeState(t, edgeStates[l])) return false;
+        } else if (edgeStates[t] != 0 && edgeStates[l] != 0 && edgeStates[t] != edgeStates[l]) {
+            return false;
+        }
+    }
+    if (clues[rows * cols - 1] == 2) {
+        int t = getHEdgeIndex(rows, cols - 1);
+        int l = getVEdgeIndex(rows - 1, cols);
+        if (edgeStates[t] != 0 && edgeStates[l] == 0) {
+            if (!setEdgeState(l, edgeStates[t])) return false;
+        } else if (edgeStates[l] != 0 && edgeStates[t] == 0) {
+            if (!setEdgeState(t, edgeStates[l])) return false;
+        } else if (edgeStates[t] != 0 && edgeStates[l] != 0 && edgeStates[t] != edgeStates[l]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool deductParityPair(int e1, int e2, int e3, int e4) {
+    int8_t s1 = (e1 == -1) ? -1 : edgeStates[e1];
+    int8_t s2 = (e2 == -1) ? -1 : edgeStates[e2];
+    int8_t s3 = (e3 == -1) ? -1 : edgeStates[e3];
+    int8_t s4 = (e4 == -1) ? -1 : edgeStates[e4];
+    
+    int undecidedCount = 0;
+    if (s1 == 0) undecidedCount++;
+    if (s2 == 0) undecidedCount++;
+    if (s3 == 0) undecidedCount++;
+    if (s4 == 0) undecidedCount++;
+    
+    if (undecidedCount == 1) {
+        int v1 = (s1 == 1) ? 1 : 0;
+        int v2 = (s2 == 1) ? 1 : 0;
+        int v3 = (s3 == 1) ? 1 : 0;
+        int v4 = (s4 == 1) ? 1 : 0;
+        
+        if (s1 == 0) {
+            int target = (v3 + v4 - v2 + 2) % 2;
+            if (!setEdgeState(e1, target == 1 ? 1 : -1)) return false;
+        } else if (s2 == 0) {
+            int target = (v3 + v4 - v1 + 2) % 2;
+            if (!setEdgeState(e2, target == 1 ? 1 : -1)) return false;
+        } else if (s3 == 0) {
+            int target = (v1 + v2 - v4 + 2) % 2;
+            if (!setEdgeState(e3, target == 1 ? 1 : -1)) return false;
+        } else if (s4 == 0) {
+            int target = (v1 + v2 - v3 + 2) % 2;
+            if (!setEdgeState(e4, target == 1 ? 1 : -1)) return false;
+        }
+    } else if (undecidedCount == 0) {
+        int v1 = (s1 == 1) ? 1 : 0;
+        int v2 = (s2 == 1) ? 1 : 0;
+        int v3 = (s3 == 1) ? 1 : 0;
+        int v4 = (s4 == 1) ? 1 : 0;
+        if ((v1 + v2) % 2 != (v3 + v4) % 2) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool deductCutParity(const int* cutEdges, int cutSize) {
+    int undecidedCount = 0;
+    int undecidedIdx = -1;
+    int lineCount = 0;
+    for (int i = 0; i < cutSize; i++) {
+        int e = cutEdges[i];
+        if (e == -1) continue;
+        if (edgeStates[e] == 1) {
+            lineCount++;
+        } else if (edgeStates[e] == 0) {
+            undecidedCount++;
+            undecidedIdx = e;
+        }
+    }
+    
+    if (undecidedCount == 1) {
+        int target = (lineCount % 2 == 1) ? 1 : -1;
+        if (!setEdgeState(undecidedIdx, target)) {
+            return false;
+        }
+    } else if (undecidedCount == 0) {
+        if (lineCount % 2 != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool deductJordanCurveParity() {
+    int maxK = rows < cols ? rows : cols;
+    static int cutEdges[100];
+    for (int k = 1; k <= maxK; k++) {
+        // Top-Left
+        int count = 0;
+        for (int r = 0; r < k; r++) {
+            int h = getHEdgeIndex(r, k - 1 - r);
+            if (h != -1) cutEdges[count++] = h;
+        }
+        for (int c = 0; c < k; c++) {
+            int v = getVEdgeIndex(k - 1 - c, c);
+            if (v != -1) cutEdges[count++] = v;
+        }
+        if (count > 0) {
+            if (!deductCutParity(cutEdges, count)) return false;
+        }
+        
+        // Top-Right
+        count = 0;
+        for (int r = 0; r < k; r++) {
+            int h = getHEdgeIndex(r, cols - k + r);
+            if (h != -1) cutEdges[count++] = h;
+        }
+        for (int c = 0; c < k; c++) {
+            int v = getVEdgeIndex(k - 1 - c, cols - c);
+            if (v != -1) cutEdges[count++] = v;
+        }
+        if (count > 0) {
+            if (!deductCutParity(cutEdges, count)) return false;
+        }
+        
+        // Bottom-Left
+        count = 0;
+        for (int c = 0; c < k; c++) {
+            int h = getHEdgeIndex(rows - k + 1 + c, c);
+            if (h != -1) cutEdges[count++] = h;
+        }
+        for (int r = 0; r < k; r++) {
+            int v = getVEdgeIndex(rows - k + r, r);
+            if (v != -1) cutEdges[count++] = v;
+        }
+        if (count > 0) {
+            if (!deductCutParity(cutEdges, count)) return false;
+        }
+        
+        // Bottom-Right
+        count = 0;
+        for (int i = 0; i < k; i++) {
+            int h = getHEdgeIndex(rows - i, cols - k + i);
+            if (h != -1) cutEdges[count++] = h;
+        }
+        for (int i = 0; i < k; i++) {
+            int v = getVEdgeIndex(rows - k + i, cols - i);
+            if (v != -1) cutEdges[count++] = v;
+        }
+        if (count > 0) {
+            if (!deductCutParity(cutEdges, count)) return false;
+        }
+    }
+    return true;
+}
+
 // LOGICAL DEDUCTION ENGINE - INCREMENTAL PASS (AC-3 local constraint propagation)
 static inline bool deductIncremental() {
-    while (cellQueueHead != cellQueueTail || dotQueueHead != dotQueueTail) {
-        // 1. Process cells
-        int cellIdx = dequeueCell();
-        if (cellIdx != -1) {
-            dbgSource = "cell";
-            dbgCell = cellIdx;
-            dbgDot = -1;
-            int r = cellIdx / cols;
-            int c = cellIdx % cols;
-            int clue = clues[cellIdx];
-            if (clue != -1) {
-                int cellEdges[4];
-                getCellEdges(r, c, cellEdges);
+    int loopCount = 0;
+    while (true) {
+        loopCount++;
+        if (loopCount > 10000) {
+            printf("[C ERROR] deductIncremental infinite loop detected! queue sizes: cells=%d, dots=%d\n", 
+                   (cellQueueTail - cellQueueHead + MAX_CELLS * 4) % (MAX_CELLS * 4),
+                   (dotQueueTail - dotQueueHead + MAX_DOTS * 4) % (MAX_DOTS * 4));
+            return false; // Force stop
+        }
+        while (cellQueueHead != cellQueueTail || dotQueueHead != dotQueueTail) {
+            // 1. Process cells
+            int cellIdx = dequeueCell();
+            if (cellIdx != -1) {
+                dbgSource = "cell";
+                dbgCell = cellIdx;
+                dbgDot = -1;
+                int r = cellIdx / cols;
+                int c = cellIdx % cols;
+                int clue = clues[cellIdx];
+                if (clue != -1) {
+                    int cellEdges[4];
+                    getCellEdges(r, c, cellEdges);
+                    int lines = 0;
+                    int crosses = 0;
+                    int undecided[4];
+                    int undecidedCount = 0;
+                    
+                    for (int j = 0; j < 4; j++) {
+                        int idx = cellEdges[j];
+                        if (edgeStates[idx] == 1) lines++;
+                        else if (edgeStates[idx] == -1) crosses++;
+                        else undecided[undecidedCount++] = idx;
+                    }
+                    
+                    if (lines > clue || crosses > (4 - clue)) {
+                        return false; // Contradiction
+                    }
+                    
+                    if (undecidedCount > 0) {
+                        if (lines == clue) {
+                            for (int j = 0; j < undecidedCount; j++) {
+                                if (!setEdgeState(undecided[j], -1)) {
+                                    return false;
+                                }
+                            }
+                        } else if (crosses == (4 - clue)) {
+                            for (int j = 0; j < undecidedCount; j++) {
+                                if (!setEdgeState(undecided[j], 1)) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 2. Process dots
+            int dotIdx = dequeueDot();
+            if (dotIdx != -1) {
+                dbgSource = "dot";
+                dbgDot = dotIdx;
+                dbgCell = -1;
+                int r = dotIdx / (cols + 1);
+                int c = dotIdx % (cols + 1);
+                int dotEdges[4];
+                int dotEdgesCount = getDotEdges(r, c, dotEdges);
                 int lines = 0;
                 int crosses = 0;
                 int undecided[4];
                 int undecidedCount = 0;
                 
-                for (int j = 0; j < 4; j++) {
-                    int idx = cellEdges[j];
+                for (int j = 0; j < dotEdgesCount; j++) {
+                    int idx = dotEdges[j];
                     if (edgeStates[idx] == 1) lines++;
                     else if (edgeStates[idx] == -1) crosses++;
                     else undecided[undecidedCount++] = idx;
                 }
                 
-                if (lines > clue || crosses > (4 - clue)) {
-                    return false; // Contradiction
+                if (lines > 2) {
+                    return false; // Contradiction: degree limit exceeded
                 }
                 
                 if (undecidedCount > 0) {
-                    if (lines == clue) {
+                    if (lines == 2) {
                         for (int j = 0; j < undecidedCount; j++) {
                             if (!setEdgeState(undecided[j], -1)) {
                                 return false;
                             }
                         }
-                    } else if (crosses == (4 - clue)) {
-                        for (int j = 0; j < undecidedCount; j++) {
-                            if (!setEdgeState(undecided[j], 1)) {
-                                return false;
+                    } else if (lines == 1 && undecidedCount == 1) {
+                        if (!setEdgeState(undecided[0], 1)) {
+                            return false;
+                        }
+                    } else if (lines == 0 && undecidedCount == 1) {
+                        if (!setEdgeState(undecided[0], -1)) {
+                            return false;
+                        }
+                    } else if (lines == 0 && undecidedCount == 2) {
+                        // Rule A: Generalized Corner Heuristic
+                        int e1 = undecided[0];
+                        int e2 = undecided[1];
+                        bool e1IsH = (e1 < numH);
+                        bool e2IsH = (e2 < numH);
+                        if (e1IsH != e2IsH) {
+                            int hEdge = e1IsH ? e1 : e2;
+                            int vEdge = e1IsH ? e2 : e1;
+                            int hr = hEdge / cols;
+                            int hc = hEdge % cols;
+                            int vr = (vEdge - numH) / (cols + 1);
+                            int vc = (vEdge - numH) % (cols + 1);
+                            
+                            int cr = -1, cc = -1;
+                            if (hc == c && vr == r) {
+                                cr = r; cc = c;
+                            } else if (hc == c - 1 && vr == r) {
+                                cr = r; cc = c - 1;
+                            } else if (hc == c && vr == r - 1) {
+                                cr = r - 1; cc = c;
+                            } else if (hc == c - 1 && vr == r - 1) {
+                                cr = r - 1; cc = c - 1;
+                            }
+                            
+                            if (cr >= 0 && cr < rows && cc >= 0 && cc < cols) {
+                                int cellIdx = cr * cols + cc;
+                                int clue = clues[cellIdx];
+                                if (clue == 3) {
+                                    if (!setEdgeState(e1, 1)) return false;
+                                    if (!setEdgeState(e2, 1)) return false;
+                                } else if (clue == 1) {
+                                    if (!setEdgeState(e1, -1)) return false;
+                                    if (!setEdgeState(e2, -1)) return false;
+                                }
                             }
                         }
                     }
+                } else {
+                    if (lines != 0 && lines != 2) {
+                        return false; // Contradiction: degree must be 0 or 2
+                    }
                 }
-
             }
         }
         
-        // 2. Process dots
-        int dotIdx = dequeueDot();
-        if (dotIdx != -1) {
-            dbgSource = "dot";
-            dbgDot = dotIdx;
-            dbgCell = -1;
-            int r = dotIdx / (cols + 1);
-            int c = dotIdx % (cols + 1);
-            int dotEdges[4];
-            int dotEdgesCount = getDotEdges(r, c, dotEdges);
-            int lines = 0;
-            int crosses = 0;
-            int undecided[4];
-            int undecidedCount = 0;
-            
-            for (int j = 0; j < dotEdgesCount; j++) {
-                int idx = dotEdges[j];
-                if (edgeStates[idx] == 1) lines++;
-                else if (edgeStates[idx] == -1) crosses++;
-                else undecided[undecidedCount++] = idx;
-            }
-            
-            if (lines > 2) {
-                return false; // Contradiction: degree limit exceeded
-            }
-            
-            if (undecidedCount > 0) {
-                if (lines == 2) {
-                    for (int j = 0; j < undecidedCount; j++) {
-                        if (!setEdgeState(undecided[j], -1)) {
-                            return false;
-                        }
-                    }
-                } else if (lines == 1 && undecidedCount == 1) {
-                    if (!setEdgeState(undecided[0], 1)) {
-                        return false;
-                    }
-                } else if (lines == 0 && undecidedCount == 1) {
-                    if (!setEdgeState(undecided[0], -1)) {
-                        return false;
-                    }
-                } else if (lines == 0 && undecidedCount == 2) {
-                    // Rule A: Generalized Corner Heuristic
-                    int e1 = undecided[0];
-                    int e2 = undecided[1];
-                    bool e1IsH = (e1 < numH);
-                    bool e2IsH = (e2 < numH);
-                    if (e1IsH != e2IsH) {
-                        int hEdge = e1IsH ? e1 : e2;
-                        int vEdge = e1IsH ? e2 : e1;
-                        int hr = hEdge / cols;
-                        int hc = hEdge % cols;
-                        int vr = (vEdge - numH) / (cols + 1);
-                        int vc = (vEdge - numH) % (cols + 1);
-                        
-                        int cr = -1, cc = -1;
-                        if (hc == c && vr == r) {
-                            cr = r; cc = c;
-                        } else if (hc == c - 1 && vr == r) {
-                            cr = r; cc = c - 1;
-                        } else if (hc == c && vr == r - 1) {
-                            cr = r - 1; cc = c;
-                        } else if (hc == c - 1 && vr == r - 1) {
-                            cr = r - 1; cc = c - 1;
-                        }
-                        
-                        if (cr >= 0 && cr < rows && cc >= 0 && cc < cols) {
-                            int cellIdx = cr * cols + cc;
-                            int clue = clues[cellIdx];
-                            if (clue == 3) {
-                                if (!setEdgeState(e1, 1)) return false;
-                                if (!setEdgeState(e2, 1)) return false;
-                            } else if (clue == 1) {
-                                if (!setEdgeState(e1, -1)) return false;
-                                if (!setEdgeState(e2, -1)) return false;
-                            }
-                        }
-                    }
-                }
-            } else {
-                if (lines != 0 && lines != 2) {
-                    return false; // Contradiction: degree must be 0 or 2
+        // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
+        if (!deductJordanCurveParity()) return false;
+        if (!applyCorner2Rules()) return false;
+        
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (clues[r * cols + c] == 2) {
+                    int tl_v = getVEdgeIndex(r - 1, c);
+                    int tl_h = getHEdgeIndex(r, c - 1);
+                    int br_v = getVEdgeIndex(r + 1, c + 1);
+                    int br_h = getHEdgeIndex(r + 1, c + 1);
+                    if (!deductParityPair(tl_v, tl_h, br_v, br_h)) return false;
+                    
+                    int tr_v = getVEdgeIndex(r - 1, c + 1);
+                    int tr_h = getHEdgeIndex(r, c + 1);
+                    int bl_v = getVEdgeIndex(r + 1, c);
+                    int bl_h = getHEdgeIndex(r + 1, c - 1);
+                    if (!deductParityPair(tr_v, tr_h, bl_v, bl_h)) return false;
                 }
             }
+        }
+        
+        if (cellQueueHead == cellQueueTail && dotQueueHead == dotQueueTail) {
+            break;
         }
     }
     return true;
@@ -568,6 +941,10 @@ bool deduct() {
         for (int c = 0; c <= cols; c++) {
             enqueueDot(r, c);
         }
+    }
+    
+    if (!applyStaticRules()) {
+        return false;
     }
     
     return deductIncremental();
@@ -810,6 +1187,250 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
     clearQueues();
 }
 
+double calculateConsecutive3Penalty() {
+    double totalPenalty = 0.0;
+    static bool visitedH[MAX_ROWS][MAX_COLS];
+    static bool visitedV[MAX_ROWS][MAX_COLS];
+    static bool visitedDR[MAX_ROWS][MAX_COLS]; // Down-Right
+    static bool visitedDL[MAX_ROWS][MAX_COLS]; // Down-Left
+    
+    memset(visitedH, 0, sizeof(visitedH));
+    memset(visitedV, 0, sizeof(visitedV));
+    memset(visitedDR, 0, sizeof(visitedDR));
+    memset(visitedDL, 0, sizeof(visitedDL));
+    
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            if (clues[r * cols + c] == 3) {
+                // 1. Horizontal Chain
+                if (!visitedH[r][c]) {
+                    int L = 0;
+                    while (c + L < cols && clues[r * cols + (c + L)] == 3) {
+                        visitedH[r][c + L] = true;
+                        L++;
+                    }
+                    if (L >= 4) totalPenalty += 100.0 * pow(3.0, L - 3);
+                }
+                
+                // 2. Vertical Chain
+                if (!visitedV[r][c]) {
+                    int L = 0;
+                    while (r + L < rows && clues[(r + L) * cols + c] == 3) {
+                        visitedV[r + L][c] = true;
+                        L++;
+                    }
+                    if (L >= 4) totalPenalty += 100.0 * pow(3.0, L - 3);
+                }
+                
+                // 3. Diagonal Down-Right
+                if (!visitedDR[r][c]) {
+                    int L = 0;
+                    while (r + L < rows && c + L < cols && clues[(r + L) * cols + (c + L)] == 3) {
+                        visitedDR[r + L][c + L] = true;
+                        L++;
+                    }
+                    if (L >= 4) totalPenalty += 100.0 * pow(3.0, L - 3);
+                }
+                
+                // 4. Diagonal Down-Left
+                if (!visitedDL[r][c]) {
+                    int L = 0;
+                    while (r + L < rows && c - L >= 0 && clues[(r + L) * cols + (c - L)] == 3) {
+                        visitedDL[r + L][c - L] = true;
+                        L++;
+                    }
+                    if (L >= 4) totalPenalty += 100.0 * pow(3.0, L - 3);
+                }
+            }
+        }
+    }
+    return totalPenalty;
+}
+
+double calculateZigzagBendPenalty() {
+    // Populate adj and adjCount from current edgeStates
+    memset(adjCount, 0, sizeof(adjCount));
+    for (int r = 0; r <= rows; r++) {
+        for (int c = 0; c <= cols; c++) {
+            int dotId = r * (cols + 1) + c;
+            if (c < cols) {
+                int hIdx = r * cols + c;
+                if (edgeStates[hIdx] == 1) {
+                    int neighborId = dotId + 1;
+                    adj[dotId][adjCount[dotId]++] = neighborId;
+                    adj[neighborId][adjCount[neighborId]++] = dotId;
+                }
+            }
+            if (r < rows) {
+                int vIdx = numH + r * (cols + 1) + c;
+                if (edgeStates[vIdx] == 1) {
+                    int neighborId = dotId + (cols + 1);
+                    adj[dotId][adjCount[dotId]++] = neighborId;
+                    adj[neighborId][adjCount[neighborId]++] = dotId;
+                }
+            }
+        }
+    }
+
+    // 1. Find start vertex of the loop
+    int startDot = -1;
+    for (int i = 0; i < numDots; i++) {
+        if (adjCount[i] == 2) { startDot = i; break; }
+    }
+    if (startDot == -1) return 0.0;
+
+    // 2. Trace path vertices
+    static int path[MAX_DOTS];
+    int pathCount = 0;
+    static bool visited[MAX_DOTS];
+    memset(visited, 0, sizeof(visited));
+    
+    int curr = startDot, prev = -1;
+    while (true) {
+        path[pathCount++] = curr;
+        visited[curr] = true;
+        int next = -1;
+        for (int j = 0; j < adjCount[curr]; j++) {
+            if (adj[curr][j] != prev) { next = adj[curr][j]; break; }
+        }
+        if (next == -1 || next == startDot || visited[next]) break;
+        prev = curr;
+        curr = next;
+    }
+    if (pathCount < 4) return 0.0;
+
+    // 3. Extract directions
+    static int dirs[MAX_DOTS];
+    int dirCount = 0;
+    for (int i = 0; i < pathCount; i++) {
+        int d1 = path[i], d2 = path[(i + 1) % pathCount];
+        int r1 = d1 / (cols + 1), c1 = d1 % (cols + 1);
+        int r2 = d2 / (cols + 1), c2 = d2 % (cols + 1);
+        int dir = (r2 == r1-1) ? 0 : (r2 == r1+1) ? 1 : (c2 == c1-1) ? 2 : (c2 == c1+1) ? 3 : -1;
+        if (dir != -1) dirs[dirCount++] = dir;
+    }
+
+    // 4. Compress collinear segments
+    static int compDirs[MAX_DOTS];
+    int compCount = 0;
+    if (dirCount > 0) {
+        compDirs[compCount++] = dirs[0];
+        for (int i = 1; i < dirCount; i++) {
+            if (dirs[i] != compDirs[compCount - 1]) compDirs[compCount++] = dirs[i];
+        }
+        if (compCount > 1 && compDirs[0] == compDirs[compCount - 1]) compCount--;
+    }
+    if (compCount < 4) return 0.0;
+
+    // 5. Evaluate alternating bend chains
+    double totalPenalty = 0.0;
+    for (int i = 0; i < compCount; i++) {
+        int L = 2;
+        while (L < compCount && compDirs[(i + L) % compCount] == compDirs[(i + L - 2) % compCount]) {
+            L++;
+        }
+        if (L >= 5) {
+            // Guarantee maximality: ensure previous element did not alternate
+            int prevIdx = (i - 1 + compCount) % compCount;
+            if (compDirs[prevIdx] != compDirs[(i + 1) % compCount]) {
+                totalPenalty += 150.0 * pow(2.5, L - 4);
+            }
+        }
+    }
+    return totalPenalty;
+}
+
+int check_human_solvability() {
+    dsuInitFromCurrent();
+    clearQueues();
+    
+    lookaheadConfirmedCount = 0;
+    
+    // 1. Seed AC-3 queue with all active cells/dots
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) enqueueCell(r, c);
+    }
+    for (int r = 0; r <= rows; r++) {
+        for (int c = 0; c <= cols; c++) enqueueDot(r, c);
+    }
+    
+    if (!applyStaticRules()) {
+        return 0; // Contradiction
+    }
+    
+    bool changed = true;
+    int loopCount = 0;
+    while (changed) {
+        loopCount++;
+        if (loopCount > 10000) {
+            printf("[C ERROR] check_human_solvability infinite loop detected!\n");
+            return 0; // Force stop
+        }
+        // Run Level 1-3 propagation
+        if (!deductIncremental()) {
+            return 0; // Contradiction
+        }
+        
+        // Check if fully solved
+        bool allDecided = true;
+        for (int i = 0; i < numEdges; i++) {
+            if (edgeStates[i] == 0) { allDecided = false; break; }
+        }
+        if (allDecided) {
+            return isSolved() ? 1 : 0;
+        }
+        
+        changed = false;
+        
+        // 2. Perform 1-Step Lookahead on Undecided Edges
+        for (int i = 0; i < numEdges; i++) {
+            if (edgeStates[i] == 0) {
+                // Scenario A: Assume Line (1)
+                int checkpoint = dsuHistoryCount;
+                int8_t backupEdges[MAX_EDGES];
+                memcpy(backupEdges, edgeStates, numEdges);
+                
+                lookaheadConfirmedCount = 0;
+                isDoingLookahead = true;
+                bool lineSuccess = setEdgeState(i, 1) && deductIncremental();
+                isDoingLookahead = false;
+                
+                dsuRollback(checkpoint);
+                memcpy(edgeStates, backupEdges, numEdges);
+                clearQueues();
+                
+                if (!lineSuccess) {
+                    // Line leads to contradiction -> Must be Cross (-1)
+                    if (!setEdgeState(i, -1)) return 0;
+                    changed = true;
+                    break; // Restart main propagation loop
+                }
+                
+                // Scenario B: Assume Cross (-1)
+                checkpoint = dsuHistoryCount;
+                memcpy(backupEdges, edgeStates, numEdges);
+                
+                lookaheadConfirmedCount = 0;
+                isDoingLookahead = true;
+                bool crossSuccess = setEdgeState(i, -1) && deductIncremental();
+                isDoingLookahead = false;
+                
+                dsuRollback(checkpoint);
+                memcpy(edgeStates, backupEdges, numEdges);
+                clearQueues();
+                
+                if (!crossSuccess) {
+                    // Cross leads to contradiction -> Must be Line (1)
+                    if (!setEdgeState(i, 1)) return 0;
+                    changed = true;
+                    break; // Restart main propagation loop
+                }
+            }
+        }
+    }
+    return -2; // Stalled: Not solvable by 1-step lookahead human logic
+}
+
 EMSCRIPTEN_KEEPALIVE
 int solve_puzzle_wasm(bool findSingle, int maxSteps) {
     foundSolutionsCount = 0;
@@ -976,17 +1597,17 @@ static void generateRandomLoop() {
         int startC = rand() % cols;
         genCells[startR][startC] = 1;
 
-        double fillRatioMin = 0.72;
-        double fillRatioMax = 0.87;
+        double fillRatioMin = 0.60;
+        double fillRatioMax = 0.75;
         if (totalCells <= 36) {
-            fillRatioMin = 0.40;
-            fillRatioMax = 0.52;
+            fillRatioMin = 0.35;
+            fillRatioMax = 0.47;
         } else if (totalCells <= 64) {
-            fillRatioMin = 0.48;
-            fillRatioMax = 0.60;
+            fillRatioMin = 0.42;
+            fillRatioMax = 0.54;
         } else if (totalCells <= 144) {
-            fillRatioMin = 0.58;
-            fillRatioMax = 0.70;
+            fillRatioMin = 0.46;
+            fillRatioMax = 0.58;
         }
 
         int targetInsideCount = (int)(totalCells * (fillRatioMin + ((double)rand() / RAND_MAX) * (fillRatioMax - fillRatioMin)));
@@ -997,7 +1618,7 @@ static void generateRandomLoop() {
         int dr[] = {-1, 1, 0, 0};
         int dc[] = {0, 0, -1, 1};
 
-        bool shouldBreakOutside = (totalCells >= 100);
+        bool shouldBreakOutside = false;
 
         while ((insideCount < targetInsideCount || (shouldBreakOutside && count3x3OutsideBlocks(genCells) > 0)) && failedAttempts < maxFailedAttempts) {
             // Find Candidate cells with weighted score
@@ -1339,119 +1960,114 @@ static int fastPathCount = 0;
 // Fast solver validation for minimization
 static bool checkSolvability(const char* difficulty) {
     solvabilityChecks++;
-    int maxSteps = 0;
-    if (strcmp(difficulty, "easy") == 0) {
-        maxSteps = 0;
-    } else {
-        int totalCells = rows * cols;
-        if (totalCells > 150) {
-            if (strcmp(difficulty, "medium") == 0) maxSteps = 25;
-            else if (strcmp(difficulty, "hard") == 0) maxSteps = 600;
-            else if (strcmp(difficulty, "expert") == 0) maxSteps = 1500;
-            else maxSteps = 500;
-        } else {
-            if (strcmp(difficulty, "medium") == 0) maxSteps = 12;
-            else if (strcmp(difficulty, "hard") == 0) maxSteps = 500;
-            else if (strcmp(difficulty, "expert") == 0) maxSteps = 1000;
-            else maxSteps = 300;
-        }
-    }
-
+    
     // Backup current edgeStates before solving
     static int8_t origEdges[MAX_EDGES];
     memcpy(origEdges, edgeStates, numEdges);
-
-    // Try pure logical deduction first (extremely fast, under 0.1ms)
-    // If pure deduction determines all edges and satisfies all constraints,
-    // the solution is unique, and we can skip backtracking completely!
-    memset(edgeStates, 0, numEdges);
-    bool deductSuccess = deduct();
-    bool solvedSuccess = isSolved();
-    bool allDecided = true;
-    for (int i = 0; i < numEdges; i++) {
-        if (edgeStates[i] == 0) {
-            allDecided = false;
-            break;
-        }
-    }
     
-    // Print first few checks to avoid flooding output
-    static int debugPrintCount = 0;
-    if (debugPrintCount < 5) {
-        printf("Debug Solvability: deduct=%d, solved=%d, allDecided=%d\n", deductSuccess, solvedSuccess, allDecided);
-        debugPrintCount++;
-    }
-
-    if (deductSuccess && solvedSuccess && allDecided) {
-        fastPathCount++;
-        memcpy(edgeStates, origEdges, numEdges); // restore original
-        return true;
-    }
-
-    if (maxSteps == 0) {
-        memcpy(edgeStates, origEdges, numEdges); // restore original
-        debugContradictionCount++;
-        return false;
-    }
-
-    // Fallback to backtrack solver
     memset(edgeStates, 0, numEdges);
-    int solutions = solve_puzzle_wasm(false, maxSteps);
-    memcpy(edgeStates, origEdges, numEdges); // restore original
-
-    if (solutions == -1) {
-        debugTimeoutCount++;
-    } else if (solutions != 1) {
-        debugContradictionCount++;
-    }
-
-    return solutions == 1;
-}
-
-static int8_t sortTargetClues[MAX_CELLS];
-
-static bool hasAdjacentZeroClue(int idx) {
-    int r = idx / cols;
-    int c = idx % cols;
-    int dr[] = {-1, 1, 0, 0};
-    int dc[] = {0, 0, -1, 1};
-    for (int i = 0; i < 4; i++) {
-        int nr = r + dr[i];
-        int nc = c + dc[i];
-        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
-            int nIdx = nr * cols + nc;
-            if (sortTargetClues[nIdx] == 0) {
-                return true;
+    
+    int result = 0;
+    if (strcmp(difficulty, "easy") == 0) {
+        // Easy mode: strict 0-step lookahead (pure deduction)
+        bool deductSuccess = deduct();
+        bool solvedSuccess = isSolved();
+        bool allDecided = true;
+        for (int i = 0; i < numEdges; i++) {
+            if (edgeStates[i] == 0) {
+                allDecided = false;
+                break;
             }
         }
+        if (deductSuccess && solvedSuccess && allDecided) {
+            result = 1;
+        } else {
+            result = 0;
+        }
+    } else {
+        // Set lookahead limits based on difficulty
+        lookaheadConfirmedCount = 0;
+        if (strcmp(difficulty, "medium") == 0) {
+            lookaheadMaxLimit = 5;
+        } else if (strcmp(difficulty, "hard") == 0) {
+            lookaheadMaxLimit = 9;
+        } else {
+            lookaheadMaxLimit = 13; // expert
+        }
+        // Medium/Hard/Expert: 1-step lookahead human solvability check
+        result = check_human_solvability();
+        lookaheadMaxLimit = 0; // Reset limit
     }
-    return false;
+    
+    memcpy(edgeStates, origEdges, numEdges); // restore original
+    
+    if (result == 1) {
+        fastPathCount++;
+    } else if (result == 0) {
+        debugContradictionCount++;
+    } else if (result == -2) {
+        debugContradictionCount++; // treat stalled as not solvable
+    }
+    
+    return (result == 1);
 }
 
-static int compareCells(const void* a, const void* b) {
-    int idxA = *(const int*)a;
-    int idxB = *(const int*)b;
-    int valA = sortTargetClues[idxA];
-    int valB = sortTargetClues[idxB];
-    int pA = (valA == 1 || valA == 2) ? 0 : ((valA == 0) ? (hasAdjacentZeroClue(idxA) ? 0 : 1) : 2);
-    int pB = (valB == 1 || valB == 2) ? 0 : ((valB == 0) ? (hasAdjacentZeroClue(idxB) ? 0 : 1) : 2);
-    return pA - pB;
-}
-
-// FULL MINIMIZATION ENGINE IN C (TOP-DOWN)
+// FULL MINIMIZATION ENGINE IN C (TOP-DOWN & SYMMETRIC)
 EMSCRIPTEN_KEEPALIVE
 void generate_puzzle_wasm(const char* difficulty) {
     debugTimeoutCount = 0;
     debugContradictionCount = 0;
+    
+    printf("[C Debug] Starting generate_puzzle_wasm. diff=%s, rows=%d, cols=%d\n", difficulty, rows, cols);
 
     // 1. Generate a random solved loop and calculate target clues until initial board is solvable
     bool initSolvable = false;
     int generateAttempts = 0;
-    while (!initSolvable && generateAttempts < 100) {
+    while (!initSolvable && generateAttempts < 200) {
         generateAttempts++;
+        clock_t t0 = clock();
+#ifdef __EMSCRIPTEN__
+        EM_ASM({
+            if (typeof self !== 'undefined' && typeof self.reportProgress === 'function') {
+                self.reportProgress($0, -1);
+            }
+        }, generateAttempts);
+#endif
+        clock_t tProgress = clock();
         generateRandomLoop();
+        clock_t tLoop = clock();
         calculateClues();
-        initSolvable = checkSolvability(difficulty);
+        clock_t tClues = clock();
+        
+        // Calculate penalties
+        double p3 = calculateConsecutive3Penalty();
+        double pZig = calculateZigzagBendPenalty();
+        clock_t tPenalties = clock();
+        
+        // If penalties are too high, we reject this loop to ensure aesthetic quality
+        if (p3 > 0.0 || pZig > 0.0) {
+            int totalCells = rows * cols;
+            double baseAllowed = (totalCells > 150) ? (totalCells - 150) * 80.0 : 0.0;
+            double allowedPenalty = (generateAttempts < 5) ? baseAllowed : baseAllowed + (generateAttempts - 5) * 500.0;
+            
+            if (p3 + pZig > allowedPenalty) {
+                printf("[C Debug] Attempt %d: Rejected by penalties. p3=%.1f, pZig=%.1f, allowed=%.1f | loopTime=%.1fms\n",
+                       generateAttempts, p3, pZig, allowedPenalty, (double)(tLoop - tProgress) * 1000.0 / CLOCKS_PER_SEC);
+                continue; // Reject loop
+            }
+        }
+        
+        initSolvable = checkSolvability("easy");
+        clock_t tSolvable = clock();
+        
+        printf("[C Debug] Attempt %d: progress=%.1fms, loop=%.1fms, clues=%.1fms, penalties=%.1fms, solvable=%.1fms (solvable=%d)\n",
+               generateAttempts,
+               (double)(tProgress - t0) * 1000.0 / CLOCKS_PER_SEC,
+               (double)(tLoop - tProgress) * 1000.0 / CLOCKS_PER_SEC,
+               (double)(tClues - tLoop) * 1000.0 / CLOCKS_PER_SEC,
+               (double)(tPenalties - tClues) * 1000.0 / CLOCKS_PER_SEC,
+               (double)(tSolvable - tPenalties) * 1000.0 / CLOCKS_PER_SEC,
+               initSolvable);
     }
 
     // Store target loop and clues
@@ -1459,25 +2075,6 @@ void generate_puzzle_wasm(const char* difficulty) {
     memcpy(targetEdgeStates, edgeStates, numEdges);
     memcpy(dbgTargetEdges, edgeStates, numEdges);
     hasDbgTarget = true;
-    memcpy(sortTargetClues, clues, rows * cols);
-
-    // Create a list of cell indices
-    static int shuffledCells[MAX_CELLS];
-    int totalCells = rows * cols;
-    for (int i = 0; i < totalCells; i++) {
-        shuffledCells[i] = i;
-    }
-
-    // Shuffle first for random order within same priority groups
-    for (int i = totalCells - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        int temp = shuffledCells[i];
-        shuffledCells[i] = shuffledCells[j];
-        shuffledCells[j] = temp;
-    }
-
-    // Sort by priority (0 first, then 1 & 2, then 3 last)
-    qsort(shuffledCells, totalCells, sizeof(int), compareCells);
 
     // Determine target remaining clues based on difficulty
     double keepRatio = 0.52;
@@ -1485,60 +2082,151 @@ void generate_puzzle_wasm(const char* difficulty) {
     else if (strcmp(difficulty, "hard") == 0) keepRatio = 0.22;
     else if (strcmp(difficulty, "expert") == 0) keepRatio = 0.15;
 
+    int totalCells = rows * cols;
     int targetKeepCount = (int)(totalCells * keepRatio);
+    
+    // Group cells into 180-degree rotationally symmetric pairs
+    typedef struct {
+        int cellA;
+        int cellB;
+        int priority;
+    } CellPair;
+    
+    static CellPair pairs[MAX_CELLS];
+    int pairCount = 0;
+    static bool paired[MAX_CELLS];
+    memset(paired, 0, sizeof(paired));
+    
+    for (int i = 0; i < totalCells; i++) {
+        if (paired[i]) continue;
+        int r = i / cols;
+        int c = i % cols;
+        int symIdx = (rows - 1 - r) * cols + (cols - 1 - c);
+        
+        pairs[pairCount].cellA = i;
+        pairs[pairCount].cellB = symIdx;
+        paired[i] = true;
+        paired[symIdx] = true;
+        
+        // Calculate priority
+        int valA = clues[i];
+        int valB = clues[symIdx];
+        
+        if (valA == 3 || valB == 3) {
+            pairs[pairCount].priority = 2; // Keep 3 (check last)
+        } else if (valA == 0 || valB == 0) {
+            pairs[pairCount].priority = 2; // Keep 0 (check last)
+        } else {
+            pairs[pairCount].priority = 0; // Hide 1 and 2 first
+        }
+        pairCount++;
+    }
+    
+    // Shuffle pairs first
+    for (int i = pairCount - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        CellPair temp = pairs[i];
+        pairs[i] = pairs[j];
+        pairs[j] = temp;
+    }
+    
+    // Sort pairs by priority ascending (0, then 1, then 2)
+    for (int i = 0; i < pairCount - 1; i++) {
+        for (int j = i + 1; j < pairCount; j++) {
+            if (pairs[j].priority < pairs[i].priority) {
+                CellPair temp = pairs[i];
+                pairs[i] = pairs[j];
+                pairs[j] = temp;
+            }
+        }
+    }
+
     int currentClueCount = 0;
     for (int i = 0; i < totalCells; i++) {
         if (clues[i] != -1) currentClueCount++;
     }
 
-    // TOP-DOWN MINIMIZATION: Use direct individual minimization (Pass 3) to prevent chunk rollback penalties.
-    static int remainingCells[MAX_CELLS];
-    int finalRemainingCount = 0;
-    for (int i = 0; i < totalCells; i++) {
-        int cellIdx = shuffledCells[i];
-        if (clues[cellIdx] != -1) {
-            remainingCells[finalRemainingCount++] = cellIdx;
-        }
-    }
-
     solvabilityChecks = 0;
     fastPathCount = 0;
-    printf("[C Generator] Starting minimization. Total cells: %d, Initial clues: %d, Target: %d\n", 
+    printf("[C Generator] Starting symmetric minimization. Total cells: %d, Initial clues: %d, Target: %d\n", 
            totalCells, currentClueCount, targetKeepCount);
     
     // Check initial board solvability before any clue removal
     initSolvable = checkSolvability(difficulty);
     printf("Initial Board Solvability check: %d\n", initSolvable);
 
-    for (int i = 0; i < finalRemainingCount; i++) {
+    for (int i = 0; i < pairCount; i++) {
         if (currentClueCount <= targetKeepCount) break;
 
-        int cellIdx = remainingCells[i];
-        int8_t val = clues[cellIdx];
-        if (val == -1) continue;
+        int cellA = pairs[i].cellA;
+        int cellB = pairs[i].cellB;
+        
+        int8_t valA = clues[cellA];
+        int8_t valB = clues[cellB];
+        
+        if (valA == -1 && valB == -1) continue;
 
-        if (strcmp(difficulty, "easy") == 0 && val == 3 && ((double)rand() / RAND_MAX) < 0.8) {
+        if (strcmp(difficulty, "easy") == 0 && (valA == 3 || valB == 3) && ((double)rand() / RAND_MAX) < 0.8) {
             continue;
         }
 
-        // Try removing this clue
-        clues[cellIdx] = -1;
-        currentClueCount--;
+        // Try removing this pair
+        clues[cellA] = -1;
+        clues[cellB] = -1;
+        int removed = (cellA == cellB) ? 1 : 2;
+        currentClueCount -= removed;
 
         if (!checkSolvability(difficulty)) {
-            // Restore clue if uniqueness is lost
-            clues[cellIdx] = val;
-            currentClueCount++;
+            // Restore clues if uniqueness/solvability is lost
+            clues[cellA] = valA;
+            clues[cellB] = valB;
+            currentClueCount += removed;
         }
 
         if (solvabilityChecks % 50 == 0) {
-            printf("[C Generator] Progress: Checked %d/%d cells | Clues remaining: %d | FastPath: %d | Timeouts: %d | Contradictions: %d\n",
-                   solvabilityChecks, finalRemainingCount, currentClueCount, fastPathCount, debugTimeoutCount, debugContradictionCount);
+            printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d\n",
+                   solvabilityChecks, pairCount, currentClueCount, fastPathCount, debugTimeoutCount);
+#ifdef __EMSCRIPTEN__
+            EM_ASM({
+                if (typeof self !== 'undefined' && typeof self.reportProgress === 'function') {
+                    self.reportProgress($0, $1);
+                }
+            }, solvabilityChecks, pairCount);
+#endif
         }
     }
 
-    printf("[C Generator] Finished minimization! Final clues remaining: %d/%d (%d%%) | FastPath: %d/%d checks\n", 
+    printf("[C Generator] Finished symmetric minimization! Final clues remaining: %d/%d (%d%%) | FastPath: %d/%d checks\n", 
            currentClueCount, totalCells, (currentClueCount * 100) / totalCells, fastPathCount, solvabilityChecks);
+
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+        if (typeof self !== 'undefined' && typeof self.reportProgress === 'function') {
+            self.reportProgress($0, $1);
+        }
+    }, pairCount, pairCount);
+#endif
+
+    // Debug symmetry check
+    int asymmetryCount = 0;
+    for (int i = 0; i < totalCells; i++) {
+        int r = i / cols;
+        int c = i % cols;
+        int symIdx = (rows - 1 - r) * cols + (cols - 1 - c);
+        
+        bool hasA = (clues[i] != -1);
+        bool hasB = (clues[symIdx] != -1);
+        if (hasA != hasB) {
+            asymmetryCount++;
+            printf("[C Debug] Asymmetry detected at cell %d (%d,%d) vs %d (%d,%d) | clues: %d vs %d\n",
+                   i, r, c, symIdx, rows - 1 - r, cols - 1 - c, clues[i], clues[symIdx]);
+        }
+    }
+    if (asymmetryCount > 0) {
+        printf("[C Debug] TOTAL ASYMMETRIC CELLS: %d / %d\n", asymmetryCount, totalCells);
+    } else {
+        printf("[C Debug] Perfect 180-degree symmetry confirmed!\n");
+    }
 
     // Finalize: Restore the original target solved loop into edgeStates
     memcpy(edgeStates, targetEdgeStates, numEdges);

@@ -570,13 +570,54 @@ class LoopCourseGame {
     if (this.generatorWorker) {
       this.generatorWorker.terminate();
     }
+    if (this.workerTimeoutTimer) {
+      clearTimeout(this.workerTimeoutTimer);
+      this.workerTimeoutTimer = null;
+    }
 
     try {
       // Instantiate background Worker with timestamp to bypass caching
       this.generatorWorker = new Worker(`js/generator.worker.js?v=${Date.now()}`);
 
+      // Set safety timeout (e.g. 30 seconds) to fallback to main-thread if worker crashes/stalls
+      this.workerTimeoutTimer = setTimeout(() => {
+        console.warn("Worker puzzle generation timed out. Falling back to main-thread...");
+        if (this.generatorWorker) {
+          this.generatorWorker.terminate();
+          this.generatorWorker = null;
+        }
+        this.generateOnMainThread();
+      }, 30000);
+
       this.generatorWorker.onmessage = (e) => {
         const data = e.data;
+        if (data.type === 'progress') {
+          // Reset safety timeout since progress is actively reported
+          if (this.workerTimeoutTimer) {
+            clearTimeout(this.workerTimeoutTimer);
+          }
+          this.workerTimeoutTimer = setTimeout(() => {
+            console.warn("Worker puzzle generation timed out (stalled during progress). Falling back to main-thread...");
+            if (this.generatorWorker) {
+              this.generatorWorker.terminate();
+              this.generatorWorker = null;
+            }
+            this.generateOnMainThread();
+          }, 30000);
+
+          if (data.total === -1) {
+            this.statusTextEl.textContent = `パズル作成中... (初期盤面を探索中 ⚡: 試行 ${data.checked}回目)`;
+          } else {
+            const percent = Math.round((data.checked / data.total) * 100);
+            this.statusTextEl.textContent = `パズル作成中... (ヒント最小化中 ⚡: ${percent}%)`;
+          }
+          return;
+        }
+
+        if (this.workerTimeoutTimer) {
+          clearTimeout(this.workerTimeoutTimer);
+          this.workerTimeoutTimer = null;
+        }
         if (!data.success) {
           console.error("Worker puzzle generation failed:", data.error);
           this.statusTextEl.textContent = 'エラー：パズル生成に失敗しました。';
@@ -584,6 +625,8 @@ class LoopCourseGame {
           return;
         }
 
+        this.rows = data.rows;
+        this.cols = data.cols;
         this.clues = data.clues;
         this.solution = data.solution;
 
@@ -627,6 +670,10 @@ class LoopCourseGame {
   }
 
   generateOnMainThread() {
+    if (this.workerTimeoutTimer) {
+      clearTimeout(this.workerTimeoutTimer);
+      this.workerTimeoutTimer = null;
+    }
     this.statusTextEl.textContent = 'パズル作成中... (メインスレッドで実行中 ⚡)';
     this.statusTextEl.classList.add('loading');
 
@@ -636,6 +683,8 @@ class LoopCourseGame {
         const generator = new LoopCourseGenerator(this.rows, this.cols);
         const puzzle = generator.generate(this.difficulty);
 
+        this.rows = puzzle.rows;
+        this.cols = puzzle.cols;
         this.clues = puzzle.clues;
         this.solution = puzzle.solution;
 

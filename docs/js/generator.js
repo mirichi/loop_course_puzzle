@@ -15,7 +15,7 @@ let wasmSetRandomSeed = null;
 
 // Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
 if (typeof createLoopCourseModule === 'function') {
-  const wasmVersion = "20260614_v30";
+  const wasmVersion = "20260624_v43";
   createLoopCourseModule({
     locateFile: function(path, prefix) {
       if (path.endsWith('.wasm')) {
@@ -182,17 +182,17 @@ class LoopCourseGenerator {
       // Fill ratio: determine how many cells will be "Inside" the loop
       // Dynamically adjust fill ratio based on grid size to prevent border-sticking on small grids
       const totalCells = this.rows * this.cols;
-      let fillRatioMin = 0.72;
-      let fillRatioMax = 0.87;
+      let fillRatioMin = 0.60;
+      let fillRatioMax = 0.75;
       if (totalCells <= 36) {
-        fillRatioMin = 0.40;
-        fillRatioMax = 0.52;
+        fillRatioMin = 0.35;
+        fillRatioMax = 0.47;
       } else if (totalCells <= 64) {
-        fillRatioMin = 0.48;
-        fillRatioMax = 0.60;
+        fillRatioMin = 0.42;
+        fillRatioMax = 0.54;
       } else if (totalCells <= 144) {
-        fillRatioMin = 0.58;
-        fillRatioMax = 0.70;
+        fillRatioMin = 0.46;
+        fillRatioMax = 0.58;
       }
       
       const targetInsideCount = Math.floor(totalCells * (fillRatioMin + Math.random() * (fillRatioMax - fillRatioMin)));
@@ -204,7 +204,7 @@ class LoopCourseGenerator {
       const dc = [0, 0, -1, 1];
       
       // Grow while insideCount is below target OR (for large boards) there are still 3x3 blocks of outside (empty) space to break
-      const shouldBreakOutside = (totalCells >= 100);
+      const shouldBreakOutside = false;
       while ((insideCount < targetInsideCount || (shouldBreakOutside && count3x3OutsideBlocks(cells) > 0)) && failedAttempts < maxFailedAttempts) {
         const candidates = [];
         
@@ -550,7 +550,7 @@ class LoopCourseGenerator {
    * @param {string} difficulty - 'easy', 'medium', or 'hard'
    * @returns {object} { clues, solution }
    */
-  generate(difficulty = 'medium') {
+  generate(difficulty = 'medium', onProgress = null) {
     // If WebAssembly module is loaded, execute the near-instant C engine!
     if (wasmModule && wasmGeneratePuzzleWasm) {
       console.log("Generating LoopCourse puzzle via high-speed WebAssembly (C engine)...");
@@ -587,6 +587,8 @@ class LoopCourseGenerator {
       return {
         clues,
         solution,
+        rows: this.rows,
+        cols: this.cols,
         engineUsed: "WASM"
       };
     }
@@ -600,25 +602,25 @@ class LoopCourseGenerator {
     let debugContradictionCount = 0;
 
     // Fast logical solvability checker
-    const checkSolvability = () => {
+    const checkSolvability = (diff = difficulty) => {
       const solver = new LoopCourseSolver(this.rows, this.cols, clues);
       solver.strict = true;
       
       const totalCells = this.rows * this.cols;
       let maxSteps = 0; 
-      if (difficulty === 'easy') {
+      if (diff === 'easy') {
         maxSteps = 0;
       } else {
         if (totalCells > 150) {
-          if (difficulty === 'medium') maxSteps = 25;
-          else if (difficulty === 'hard') maxSteps = 600;
-          else if (difficulty === 'expert') maxSteps = 1500;
-          else maxSteps = 500;
+          if (diff === 'medium') maxSteps = 10;
+          else if (diff === 'hard') maxSteps = 40;
+          else if (diff === 'expert') maxSteps = 80;
+          else maxSteps = 50;
         } else {
-          if (difficulty === 'medium') maxSteps = 12;
-          else if (difficulty === 'hard') maxSteps = 500;
-          else if (difficulty === 'expert') maxSteps = 1000;
-          else maxSteps = 300;
+          if (diff === 'medium') maxSteps = 6;
+          else if (diff === 'hard') maxSteps = 30;
+          else if (diff === 'expert') maxSteps = 60;
+          else maxSteps = 20;
         }
       }
       
@@ -649,65 +651,57 @@ class LoopCourseGenerator {
     let generateAttempts = 0;
     while (!initSolvable && generateAttempts < 100) {
       generateAttempts++;
+      if (onProgress) {
+        onProgress(generateAttempts, -1);
+      }
       const res = this.generateRandomLoop();
       cells = res.cells;
       loopEdges = res.loopEdges;
       originalClues = this.calculateClues(cells);
       
       clues = originalClues.map(row => [...row]);
-      initSolvable = checkSolvability();
+      initSolvable = checkSolvability('easy');
     }
     
-    // Step 2: Minimize clues while keeping solution unique
-    // Create a list of cell coordinates
-    const cellCoords = [];
-    for (let r = 0; r < this.rows; r++) {
-      for (let c = 0; c < this.cols; c++) {
-        cellCoords.push([r, c]);
+    // Step 2: Minimize clues while keeping solution unique using 180-degree rotational symmetry
+    const totalCells = this.rows * this.cols;
+    const pairs = [];
+    const paired = new Array(totalCells).fill(false);
+    
+    for (let i = 0; i < totalCells; i++) {
+      if (paired[i]) continue;
+      const r = Math.floor(i / this.cols);
+      const c = i % this.cols;
+      const rSym = this.rows - 1 - r;
+      const cSym = this.cols - 1 - c;
+      const symIdx = rSym * this.cols + cSym;
+      
+      paired[i] = true;
+      paired[symIdx] = true;
+      
+      const valA = originalClues[r][c];
+      const valB = originalClues[rSym][cSym];
+      
+      let priority = 0;
+      if (valA === 3 || valB === 3 || valA === 0 || valB === 0) {
+        priority = 2; // Keep 0 and 3 (check last)
       }
+      
+      pairs.push({
+        rA: r, cA: c,
+        rB: rSym, cB: cSym,
+        priority: priority
+      });
     }
     
-    // Shuffle the cell coordinates first for randomness within groups
-    for (let i = cellCoords.length - 1; i > 0; i--) {
+    // Shuffle pairs first
+    for (let i = pairs.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [cellCoords[i], cellCoords[j]] = [cellCoords[j], cellCoords[i]];
+      [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
     }
     
-    // Sort cell coordinates by Block ID first (spatial partitioning), then by clue priority:
-    cellCoords.sort((a, b) => {
-      const [rA, cA] = a;
-      const [rB, cB] = b;
-      
-      const blockSI = 8;
-      const blockIdA = Math.floor(rA / blockSI) * 100 + Math.floor(cA / blockSI);
-      const blockIdB = Math.floor(rB / blockSI) * 100 + Math.floor(cB / blockSI);
-      
-      if (blockIdA !== blockIdB) {
-        return blockIdA - blockIdB;
-      }
-      
-      const getPriority = (r, c) => {
-        const clue = originalClues[r][c];
-        if (clue === 1 || clue === 2) return 0; // Hide first!
-        if (clue === 0) {
-          const dr = [-1, 1, 0, 0];
-          const dc = [0, 0, -1, 1];
-          for (let i = 0; i < 4; i++) {
-            const nr = r + dr[i];
-            const nc = c + dc[i];
-            if (nr >= 0 && nr < this.rows && nc >= 0 && nc < this.cols) {
-              if (originalClues[nr][nc] === 0) {
-                return 0; // Prioritize hiding adjacent 0s first!
-              }
-            }
-          }
-          return 1; // Hide second!
-        }
-        return 2; // 3 (Keep last!)
-      };
-      
-      return getPriority(rA, cA) - getPriority(rB, cB);
-    });
+    // Sort pairs by priority ascending (0, then 2)
+    pairs.sort((a, b) => a.priority - b.priority);
     
     // Adjust target parameters based on difficulty
     let keepRatio = 0.52; // Default for easy
@@ -716,42 +710,53 @@ class LoopCourseGenerator {
     if (difficulty === 'expert') keepRatio = 0.15; // Expert: 15% remaining clues
     
     const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
-    let currentClueCount = this.rows * this.cols;
-    
-    const isLargeBoard = this.rows * this.cols > 150;
-
-    // Pass 3: Individual Fine-tuning (size 1)
-    const remainingCoordsAfterPass1 = [];
-    for (const [r, c] of cellCoords) {
-      if (clues[r][c] !== null) {
-        remainingCoordsAfterPass1.push([r, c]);
+    let currentClueCount = 0;
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (clues[r][c] !== null) currentClueCount++;
       }
     }
     
-    for (let i = 0; i < remainingCoordsAfterPass1.length; i++) {
+    for (let i = 0; i < pairs.length; i++) {
       if (currentClueCount <= targetKeepCount) break;
       
-      const [r, c] = remainingCoordsAfterPass1[i];
-      const val = clues[r][c];
-      if (val === null) continue;
+      const { rA, cA, rB, cB } = pairs[i];
+      const valA = clues[rA][cA];
+      const valB = clues[rB][cB];
       
-      if (difficulty === 'easy' && val === 3 && Math.random() < 0.8) {
+      if (valA === null && valB === null) continue;
+      
+      if (difficulty === 'easy' && (valA === 3 || valB === 3) && Math.random() < 0.8) {
         continue;
       }
       
-      // Try removing this clue
-      clues[r][c] = null;
-      currentClueCount--;
+      // Try removing this pair
+      clues[rA][cA] = null;
+      clues[rB][cB] = null;
+      const removed = (rA === rB && cA === cB) ? 1 : 2;
+      currentClueCount -= removed;
       
       if (!checkSolvability()) {
-        clues[r][c] = val;
-        currentClueCount++;
+        // Restore clues if uniqueness/solvability is lost
+        clues[rA][cA] = valA;
+        clues[rB][cB] = valB;
+        currentClueCount += removed;
       }
+      
+      if (onProgress && i % 10 === 0) {
+        onProgress(i, pairs.length);
+      }
+    }
+    
+    if (onProgress) {
+      onProgress(pairs.length, pairs.length);
     }
     
     return {
       clues,
       solution: loopEdges,
+      rows: this.rows,
+      cols: this.cols,
       engineUsed: "JS"
     };
   }
