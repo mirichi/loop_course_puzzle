@@ -587,7 +587,7 @@ class LoopCourseGame {
           this.generatorWorker = null;
         }
         this.generateOnMainThread();
-      }, 30000);
+      }, 90000); // Increased from 30s to 90s to prevent premature fallback
 
       this.generatorWorker.onmessage = (e) => {
         const data = e.data;
@@ -603,7 +603,7 @@ class LoopCourseGame {
               this.generatorWorker = null;
             }
             this.generateOnMainThread();
-          }, 30000);
+          }, 90000); // Increased from 30s to 90s to prevent premature fallback
 
           if (data.total === -1) {
             this.statusTextEl.textContent = `パズル作成中... (初期盤面を探索中 ⚡: 試行 ${data.checked}回目)`;

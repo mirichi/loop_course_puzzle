@@ -565,6 +565,54 @@ static bool applyStaticRules() {
                     }
                 }
             }
+            
+            // Rule 2.5: Diagonally Adjacent 0-3 and 0-1 Cells
+            if (clue == 0) {
+                // Bottom-Right
+                if (r + 1 < rows && c + 1 < cols) {
+                    int diagClue = clues[(r + 1) * cols + (c + 1)];
+                    if (diagClue == 3 || diagClue == 1) {
+                        int tA = getHEdgeIndex(r + 1, c + 1);
+                        int lA = getVEdgeIndex(r + 1, c + 1);
+                        int state = (diagClue == 3) ? 1 : -1;
+                        if (!setEdgeState(tA, state)) return false;
+                        if (!setEdgeState(lA, state)) return false;
+                    }
+                }
+                // Bottom-Left
+                if (r + 1 < rows && c - 1 >= 0) {
+                    int diagClue = clues[(r + 1) * cols + (c - 1)];
+                    if (diagClue == 3 || diagClue == 1) {
+                        int tB = getHEdgeIndex(r + 1, c - 1);
+                        int rB = getVEdgeIndex(r + 1, c);
+                        int state = (diagClue == 3) ? 1 : -1;
+                        if (!setEdgeState(tB, state)) return false;
+                        if (!setEdgeState(rB, state)) return false;
+                    }
+                }
+                // Top-Right
+                if (r - 1 >= 0 && c + 1 < cols) {
+                    int diagClue = clues[(r - 1) * cols + (c + 1)];
+                    if (diagClue == 3 || diagClue == 1) {
+                        int bC = getHEdgeIndex(r, c + 1);
+                        int lC = getVEdgeIndex(r - 1, c + 1);
+                        int state = (diagClue == 3) ? 1 : -1;
+                        if (!setEdgeState(bC, state)) return false;
+                        if (!setEdgeState(lC, state)) return false;
+                    }
+                }
+                // Top-Left
+                if (r - 1 >= 0 && c - 1 >= 0) {
+                    int diagClue = clues[(r - 1) * cols + (c - 1)];
+                    if (diagClue == 3 || diagClue == 1) {
+                        int bD = getHEdgeIndex(r, c - 1);
+                        int rD = getVEdgeIndex(r - 1, c);
+                        int state = (diagClue == 3) ? 1 : -1;
+                        if (!setEdgeState(bD, state)) return false;
+                        if (!setEdgeState(rD, state)) return false;
+                    }
+                }
+            }
         }
     }
     return true;
@@ -804,6 +852,62 @@ static inline bool deductIncremental() {
                                 if (!setEdgeState(undecided[j], 1)) {
                                     return false;
                                 }
+                            }
+                        }
+                    }
+                    
+                    if (clue == 2) {
+                        // "2 and 3 diagonally adjacent with an external cross" deduction rule
+                        // Bottom-Right
+                        if (r + 1 < rows && c + 1 < cols && clues[(r + 1) * cols + (c + 1)] == 3) {
+                            int tA = getHEdgeIndex(r, c);
+                            int lA = getVEdgeIndex(r, c);
+                            if (edgeStates[tA] == -1 || edgeStates[lA] == -1) {
+                                if (edgeStates[tA] == -1) { if (!setEdgeState(lA, 1)) return false; }
+                                if (edgeStates[lA] == -1) { if (!setEdgeState(tA, 1)) return false; }
+                                int rB = getVEdgeIndex(r + 1, c + 2);
+                                int bB = getHEdgeIndex(r + 2, c + 1);
+                                if (!setEdgeState(rB, 1)) return false;
+                                if (!setEdgeState(bB, 1)) return false;
+                            }
+                        }
+                        // Bottom-Left
+                        if (r + 1 < rows && c - 1 >= 0 && clues[(r + 1) * cols + (c - 1)] == 3) {
+                            int tB = getHEdgeIndex(r, c);
+                            int rB = getVEdgeIndex(r, c + 1);
+                            if (edgeStates[tB] == -1 || edgeStates[rB] == -1) {
+                                if (edgeStates[tB] == -1) { if (!setEdgeState(rB, 1)) return false; }
+                                if (edgeStates[rB] == -1) { if (!setEdgeState(tB, 1)) return false; }
+                                int lB = getVEdgeIndex(r + 1, c - 1);
+                                int bB = getHEdgeIndex(r + 2, c - 1);
+                                if (!setEdgeState(lB, 1)) return false;
+                                if (!setEdgeState(bB, 1)) return false;
+                            }
+                        }
+                        // Top-Right
+                        if (r - 1 >= 0 && c + 1 < cols && clues[(r - 1) * cols + (c + 1)] == 3) {
+                            int bC = getHEdgeIndex(r + 1, c);
+                            int lC = getVEdgeIndex(r, c);
+                            if (edgeStates[bC] == -1 || edgeStates[lC] == -1) {
+                                if (edgeStates[bC] == -1) { if (!setEdgeState(lC, 1)) return false; }
+                                if (edgeStates[lC] == -1) { if (!setEdgeState(bC, 1)) return false; }
+                                int rC = getVEdgeIndex(r - 1, c + 2);
+                                int tC = getHEdgeIndex(r - 1, c + 1);
+                                if (!setEdgeState(rC, 1)) return false;
+                                if (!setEdgeState(tC, 1)) return false;
+                            }
+                        }
+                        // Top-Left
+                        if (r - 1 >= 0 && c - 1 >= 0 && clues[(r - 1) * cols + (c - 1)] == 3) {
+                            int bD = getHEdgeIndex(r + 1, c);
+                            int rD = getVEdgeIndex(r, c + 1);
+                            if (edgeStates[bD] == -1 || edgeStates[rD] == -1) {
+                                if (edgeStates[bD] == -1) { if (!setEdgeState(rD, 1)) return false; }
+                                if (edgeStates[rD] == -1) { if (!setEdgeState(bD, 1)) return false; }
+                                int lD = getVEdgeIndex(r - 1, c - 1);
+                                int tD = getHEdgeIndex(r - 1, c - 1);
+                                if (!setEdgeState(lD, 1)) return false;
+                                if (!setEdgeState(tD, 1)) return false;
                             }
                         }
                     }
@@ -1728,7 +1832,10 @@ static void generateRandomLoop() {
                             double distScore = 1.0 + dist * 0.25;
 
                             bool isBorder = (r == 0 || r == rows - 1 || c == 0 || c == cols - 1);
-                            double borderPenalty = (totalCells <= 64 && isBorder) ? 0.35 : 1.0;
+                            double borderPenalty = 1.0;
+                            if (isBorder) {
+                                borderPenalty = (totalCells <= 64) ? 0.35 : 0.65;
+                            }
 
                             double bendMultiplier = 1.0;
                             if (insideNeighbors == 1 && firstNeighborR != -1) {
@@ -1988,11 +2095,11 @@ static bool checkSolvability(const char* difficulty) {
         // Set lookahead limits based on difficulty
         lookaheadConfirmedCount = 0;
         if (strcmp(difficulty, "medium") == 0) {
-            lookaheadMaxLimit = 5;
+            lookaheadMaxLimit = 2;
         } else if (strcmp(difficulty, "hard") == 0) {
-            lookaheadMaxLimit = 9;
+            lookaheadMaxLimit = 5;
         } else {
-            lookaheadMaxLimit = 13; // expert
+            lookaheadMaxLimit = 8; // expert
         }
         // Medium/Hard/Expert: 1-step lookahead human solvability check
         result = check_human_solvability();
@@ -2057,7 +2164,7 @@ void generate_puzzle_wasm(const char* difficulty) {
             }
         }
         
-        initSolvable = checkSolvability("easy");
+        initSolvable = checkSolvability(difficulty);
         clock_t tSolvable = clock();
         
         printf("[C Debug] Attempt %d: progress=%.1fms, loop=%.1fms, clues=%.1fms, penalties=%.1fms, solvable=%.1fms (solvable=%d)\n",
@@ -2080,7 +2187,7 @@ void generate_puzzle_wasm(const char* difficulty) {
     double keepRatio = 0.52;
     if (strcmp(difficulty, "medium") == 0) keepRatio = 0.42;
     else if (strcmp(difficulty, "hard") == 0) keepRatio = 0.22;
-    else if (strcmp(difficulty, "expert") == 0) keepRatio = 0.15;
+    else if (strcmp(difficulty, "expert") == 0) keepRatio = 0.0;
 
     int totalCells = rows * cols;
     int targetKeepCount = (int)(totalCells * keepRatio);
@@ -2155,10 +2262,45 @@ void generate_puzzle_wasm(const char* difficulty) {
     initSolvable = checkSolvability(difficulty);
     printf("Initial Board Solvability check: %d\n", initSolvable);
 
+    // Pass 1: Prioritize removing specific clues based on difficulty
+    if (strcmp(difficulty, "hard") == 0 || strcmp(difficulty, "expert") == 0) {
+        for (int i = 0; i < pairCount; i++) {
+            if (currentClueCount <= targetKeepCount) break;
+            int cellA = pairs[i].cellA;
+            int cellB = pairs[i].cellB;
+            int8_t valA = clues[cellA];
+            int8_t valB = clues[cellB];
+            if (valA == -1 && valB == -1) continue;
+            
+            if (strcmp(difficulty, "hard") == 0) {
+                // Hard: prioritize '0'
+                if (valA != 0 && valB != 0) continue;
+            } else {
+                // Expert: prioritize '0' and '3' to reduce their frequency
+                bool has0or3 = (valA == 0 || valA == 3 || valB == 0 || valB == 3);
+                if (!has0or3) continue;
+            }
+            
+            clues[cellA] = -1;
+            clues[cellB] = -1;
+            int removed = (cellA == cellB) ? 1 : 2;
+            currentClueCount -= removed;
+            if (!checkSolvability(difficulty)) {
+                clues[cellA] = valA;
+                clues[cellB] = valB;
+                currentClueCount += removed;
+            } else {
+                pairs[i].cellA = -1; // Mark as processed
+            }
+        }
+    }
+
+    // Pass 2: General removal
     for (int i = 0; i < pairCount; i++) {
         if (currentClueCount <= targetKeepCount) break;
 
         int cellA = pairs[i].cellA;
+        if (cellA == -1) continue; // Skip if removed in Pass 1
         int cellB = pairs[i].cellB;
         
         int8_t valA = clues[cellA];
@@ -2183,7 +2325,7 @@ void generate_puzzle_wasm(const char* difficulty) {
             currentClueCount += removed;
         }
 
-        if (solvabilityChecks % 50 == 0) {
+        if (solvabilityChecks % 10 == 0) {
             printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d\n",
                    solvabilityChecks, pairCount, currentClueCount, fastPathCount, debugTimeoutCount);
 #ifdef __EMSCRIPTEN__
