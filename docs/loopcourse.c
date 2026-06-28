@@ -2629,15 +2629,15 @@ void generate_puzzle_wasm(const char* difficulty) {
             currentClueCount += removed;
         }
 
-        if (solvabilityChecks % 10 == 0) {
+        if ((i + 1) % 10 == 0) {
             printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d\n",
-                   solvabilityChecks, pairCount, currentClueCount, fastPathCount, debugTimeoutCount);
+                   i + 1, pairCount, currentClueCount, fastPathCount, debugTimeoutCount);
 #ifdef __EMSCRIPTEN__
             EM_ASM({
                 if (typeof self !== 'undefined' && typeof self.reportProgress === 'function') {
                     self.reportProgress($0, $1);
                 }
-            }, solvabilityChecks, pairCount);
+            }, i + 1, pairCount);
 #endif
         }
     }
