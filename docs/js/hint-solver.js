@@ -2355,6 +2355,101 @@ class LoopCourseHintSolver {
     }
     return hints;
   }
+  // --- RULE 26: 2と3が斜めに隣接し、2の外側の2辺のどちらかに×がある場合 ---
+  checkDiagonal23WithExternalCross() {
+    const hints = [];
+
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.clues[r][c] !== 2) continue;
+
+        const diagonals = [
+          {
+            // Bottom-Right: 3 is at (r+1, c+1)
+            dr: 1, dc: 1,
+            outer2H: this.getHEdgeIndex(r, c),
+            outer2V: this.getVEdgeIndex(r, c),
+            outer3H: this.getHEdgeIndex(r + 2, c + 1),
+            outer3V: this.getVEdgeIndex(r + 1, c + 2)
+          },
+          {
+            // Bottom-Left: 3 is at (r+1, c-1)
+            dr: 1, dc: -1,
+            outer2H: this.getHEdgeIndex(r, c),
+            outer2V: this.getVEdgeIndex(r, c + 1),
+            outer3H: this.getHEdgeIndex(r + 2, c - 1),
+            outer3V: this.getVEdgeIndex(r + 1, c - 1)
+          },
+          {
+            // Top-Right: 3 is at (r-1, c+1)
+            dr: -1, dc: 1,
+            outer2H: this.getHEdgeIndex(r + 1, c),
+            outer2V: this.getVEdgeIndex(r, c),
+            outer3H: this.getHEdgeIndex(r - 1, c + 1),
+            outer3V: this.getVEdgeIndex(r - 1, c + 2)
+          },
+          {
+            // Top-Left: 3 is at (r-1, c-1)
+            dr: -1, dc: -1,
+            outer2H: this.getHEdgeIndex(r + 1, c),
+            outer2V: this.getVEdgeIndex(r, c + 1),
+            outer3H: this.getHEdgeIndex(r - 1, c - 1),
+            outer3V: this.getVEdgeIndex(r - 1, c - 1)
+          }
+        ];
+
+        for (const diag of diagonals) {
+          const r3 = r + diag.dr;
+          const c3 = c + diag.dc;
+
+          if (r3 >= 0 && r3 < this.rows && c3 >= 0 && c3 < this.cols) {
+            if (this.clues[r3][c3] === 3) {
+              const o2H = diag.outer2H;
+              const o2V = diag.outer2V;
+              const o3H = diag.outer3H;
+              const o3V = diag.outer3V;
+
+              const hIsCross = (o2H !== -1 && this.edgeStates[o2H] === -1);
+              const vIsCross = (o2V !== -1 && this.edgeStates[o2V] === -1);
+
+              if (hIsCross || vIsCross) {
+                if (hIsCross && o2V !== -1 && this.edgeStates[o2V] === 0) {
+                  hints.push({
+                    edgeIdx: o2V,
+                    state: 1,
+                    reason: `2と3が斜めに隣接し、2の外側の辺の片方が×であるため、もう片方の辺は必ず線になります。`
+                  });
+                }
+                if (vIsCross && o2H !== -1 && this.edgeStates[o2H] === 0) {
+                  hints.push({
+                    edgeIdx: o2H,
+                    state: 1,
+                    reason: `2と3が斜めに隣接し、2の外側の辺の片方が×であるため、もう片方の辺は必ず線になります。`
+                  });
+                }
+                
+                if (o3H !== -1 && this.edgeStates[o3H] === 0) {
+                  hints.push({
+                    edgeIdx: o3H,
+                    state: 1,
+                    reason: `2と3が斜めに隣接し、2の外側の辺に×があるため、3の外側の2辺は必ず両方とも線になります。`
+                  });
+                }
+                if (o3V !== -1 && this.edgeStates[o3V] === 0) {
+                  hints.push({
+                    edgeIdx: o3V,
+                    state: 1,
+                    reason: `2と3が斜めに隣接し、2の外側の辺に×があるため、3の外側の2辺は必ず両方とも線になります。`
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return hints;
+  }
 
   // --- Main API Entrypoint ---
   static getHint(rows, cols, clues, edgeStates, solution, allowMulti = false) {
@@ -2431,7 +2526,8 @@ class LoopCourseHintSolver {
       () => solver.check3AdjacentTo0(),
       () => solver.checkDotConstraints(),
       () => solver.check2OppositeLineFromLineCross(),
-      () => solver.checkAdjacent3sWith2()
+      () => solver.checkAdjacent3sWith2(),
+      () => solver.checkDiagonal23WithExternalCross()
     ];
 
     for (const rule of lineRules) {
