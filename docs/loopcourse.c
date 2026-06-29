@@ -451,6 +451,11 @@ static bool applyStaticRules() {
                     if (!setEdgeState(shared, 1)) return false;
                     if (!setEdgeState(outerL, 1)) return false;
                     if (!setEdgeState(outerR, 1)) return false;
+                    
+                    int above = getVEdgeIndex(r - 1, c + 1);
+                    int below = getVEdgeIndex(r + 1, c + 1);
+                    if (above != -1 && !setEdgeState(above, -1)) return false;
+                    if (below != -1 && !setEdgeState(below, -1)) return false;
                 }
                 if (r + 1 < rows && clues[(r + 1) * cols + c] == 3) {
                     int shared = getHEdgeIndex(r + 1, c);
@@ -459,6 +464,11 @@ static bool applyStaticRules() {
                     if (!setEdgeState(shared, 1)) return false;
                     if (!setEdgeState(outerT, 1)) return false;
                     if (!setEdgeState(outerB, 1)) return false;
+                    
+                    int leftwards = getHEdgeIndex(r + 1, c - 1);
+                    int rightwards = getHEdgeIndex(r + 1, c + 1);
+                    if (leftwards != -1 && !setEdgeState(leftwards, -1)) return false;
+                    if (rightwards != -1 && !setEdgeState(rightwards, -1)) return false;
                 }
             }
             
@@ -788,8 +798,9 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
             oppEdge2 = getVEdgeIndex(curr_r, curr_c);
         }
         
-        if (clue == 0) return false;
-        else if (clue == 1) {
+        if (clue == 0) {
+            return false;
+        } else if (clue == 1) {
             if (!setEdgeState(oppEdge1, -1)) return false;
             if (!setEdgeState(oppEdge2, -1)) return false;
         } else if (clue == 3) {
@@ -801,7 +812,8 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
 }
 
 // Returns true if assuming cell (r,c) passes 0 lines to dot in direction (dr, dc) causes a contradiction.
-static inline bool checkZeroLineAssumption(int r, int c, int dr, int dc) {
+static inline int checkDiagonalChain(int r, int c, int dr, int dc) {
+    int startClue = getClue(r, c);
     int curr_r = r + dr;
     int curr_c = c + dc;
     while (getClue(curr_r, curr_c) == 2) {
@@ -809,36 +821,39 @@ static inline bool checkZeroLineAssumption(int r, int c, int dr, int dc) {
         curr_c += dc;
     }
     int clue = getClue(curr_r, curr_c);
-    if (clue == -1) return false; // Boundary is fine with 0 lines
-    if (clue == 0) return false;  // 0 cell is fine with 0 lines (2 crosses)
-    if (clue == 3) return true;   // 3 cell CANNOT have 2 crosses! Contradiction!
+    int result = 0;
     
-    // Find opposite edges of the end cell
-    int oppEdge1, oppEdge2;
-    if (dr == 1 && dc == 1) { 
-        oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
-        oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
-    } else if (dr == -1 && dc == -1) { 
-        oppEdge1 = getHEdgeIndex(curr_r, curr_c);
-        oppEdge2 = getVEdgeIndex(curr_r, curr_c);
-    } else if (dr == -1 && dc == 1) { 
-        oppEdge1 = getHEdgeIndex(curr_r, curr_c);
-        oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
-    } else if (dr == 1 && dc == -1) { 
-        oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
-        oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+    // Check SLE Contradiction (State B is impossible)
+    if (clue == 0) {
+        result |= 2;
     }
     
-    if (clue == 2) {
-        // 2 cell needs 2 lines. Incoming is 0 lines (2 crosses).
-        // So opposite edges MUST both be 1.
-        if (edgeStates[oppEdge1] == -1 || edgeStates[oppEdge2] == -1) return true;
+    // Check Zero-Line Contradiction (State A is impossible)
+    if (clue == 3) {
+        if (startClue == 3) {
+            result |= 1;
+        }
     } else if (clue == 1) {
-        // 1 cell needs 1 line. Incoming is 0 lines.
-        // So opposite edges MUST be {1, -1}.
-        if (edgeStates[oppEdge1] == -1 && edgeStates[oppEdge2] == -1) return true;
+        int oppEdge1 = -1, oppEdge2 = -1;
+        if (dr == 1 && dc == 1) { 
+            oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+            oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+        } else if (dr == -1 && dc == -1) { 
+            oppEdge1 = getHEdgeIndex(curr_r, curr_c);
+            oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+        } else if (dr == -1 && dc == 1) { 
+            oppEdge1 = getHEdgeIndex(curr_r, curr_c);
+            oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+        } else if (dr == 1 && dc == -1) { 
+            oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+            oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+        }
+        if (oppEdge1 != -1 && oppEdge2 != -1 && edgeStates[oppEdge1] == -1 && edgeStates[oppEdge2] == -1) {
+            result |= 1;
+        }
     }
-    return false;
+    
+    return result;
 }
 
 static inline bool deductIncremental() {
@@ -907,26 +922,23 @@ static inline bool deductIncremental() {
                         if (edgeStates[eB] == 1 && edgeStates[eL] == 1) { if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; }
                         if (edgeStates[eB] == 1 && edgeStates[eR] == 1) { if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false; }
                         
+                        int status;
                         // Down-Right dot is eB, eR. Opposite is eT, eL.
-                        if (checkZeroLineAssumption(r, c, 1, 1)) {
-                            if (!setEdgeState(eT, 1)) return false;
-                            if (!setEdgeState(eL, 1)) return false;
-                        }
+                        status = checkDiagonalChain(r, c, 1, 1);
+                        if (status & 1) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
                         // Down-Left dot is eB, eL. Opposite is eT, eR.
-                        if (checkZeroLineAssumption(r, c, 1, -1)) {
-                            if (!setEdgeState(eT, 1)) return false;
-                            if (!setEdgeState(eR, 1)) return false;
-                        }
+                        status = checkDiagonalChain(r, c, 1, -1);
+                        if (status & 1) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
                         // Up-Right dot is eT, eR. Opposite is eB, eL.
-                        if (checkZeroLineAssumption(r, c, -1, 1)) {
-                            if (!setEdgeState(eB, 1)) return false;
-                            if (!setEdgeState(eL, 1)) return false;
-                        }
+                        status = checkDiagonalChain(r, c, -1, 1);
+                        if (status & 1) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
                         // Up-Left dot is eT, eL. Opposite is eB, eR.
-                        if (checkZeroLineAssumption(r, c, -1, -1)) {
-                            if (!setEdgeState(eB, 1)) return false;
-                            if (!setEdgeState(eR, 1)) return false;
-                        }
+                        status = checkDiagonalChain(r, c, -1, -1);
+                        if (status & 1) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
 
                     } else if (clue == 1) {
                         int eT = cellEdges[0];
@@ -938,6 +950,24 @@ static inline bool deductIncremental() {
                         if (edgeStates[eT] == -1 && edgeStates[eR] == -1) { if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; }
                         if (edgeStates[eB] == -1 && edgeStates[eL] == -1) { if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; }
                         if (edgeStates[eB] == -1 && edgeStates[eR] == -1) { if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false; }
+                        
+                        int status;
+                        // Down-Right dot is eB, eR. Opposite is eT, eL.
+                        status = checkDiagonalChain(r, c, 1, 1);
+                        if (status & 1) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
+                        // Down-Left dot is eB, eL. Opposite is eT, eR.
+                        status = checkDiagonalChain(r, c, 1, -1);
+                        if (status & 1) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
+                        // Up-Right dot is eT, eR. Opposite is eB, eL.
+                        status = checkDiagonalChain(r, c, -1, 1);
+                        if (status & 1) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
+                        // Up-Left dot is eT, eL. Opposite is eB, eR.
+                        status = checkDiagonalChain(r, c, -1, -1);
+                        if (status & 1) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
+                        if (status & 2) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
 
                     } else if (clue == 2) {
                         int eT = cellEdges[0];
@@ -974,26 +1004,54 @@ static inline bool deductIncremental() {
                             if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; // Down-Left
                         }
                         
+                        int status;
                         // Down-Right dot is eB, eR. Opposite is eT, eL.
-                        if (checkZeroLineAssumption(r, c, 1, 1)) {
-                            // Opposite edges CANNOT both be -1.
+                        status = checkDiagonalChain(r, c, 1, 1);
+                        if (status & 1) {
                             if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
                             if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
                         }
+                        if (status & 2) {
+                            if (edgeStates[eB] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
+                            if (edgeStates[eR] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                            if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
+                            if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
+                        }
                         // Down-Left dot is eB, eL. Opposite is eT, eR.
-                        if (checkZeroLineAssumption(r, c, 1, -1)) {
+                        status = checkDiagonalChain(r, c, 1, -1);
+                        if (status & 1) {
                             if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
                             if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
                         }
+                        if (status & 2) {
+                            if (edgeStates[eB] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
+                            if (edgeStates[eL] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                            if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
+                            if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
+                        }
                         // Up-Right dot is eT, eR. Opposite is eB, eL.
-                        if (checkZeroLineAssumption(r, c, -1, 1)) {
+                        status = checkDiagonalChain(r, c, -1, 1);
+                        if (status & 1) {
                             if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
                             if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
                         }
+                        if (status & 2) {
+                            if (edgeStates[eT] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
+                            if (edgeStates[eR] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
+                            if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
+                            if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
+                        }
                         // Up-Left dot is eT, eL. Opposite is eB, eR.
-                        if (checkZeroLineAssumption(r, c, -1, -1)) {
+                        status = checkDiagonalChain(r, c, -1, -1);
+                        if (status & 1) {
                             if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
                             if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                        }
+                        if (status & 2) {
+                            if (edgeStates[eT] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
+                            if (edgeStates[eL] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
+                            if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
+                            if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
                         }
                     }
                     
@@ -1005,15 +1063,27 @@ static inline bool deductIncremental() {
                     int eL = cellEdges[3];
                     if (edgeStates[eT] != 0 && edgeStates[eL] != 0 && edgeStates[eT] != edgeStates[eL]) {
                         if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false;
+                        if (clue == 2 && (edgeStates[eB] == 0 || edgeStates[eR] == 0)) {
+                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false;
+                        }
                     }
                     if (edgeStates[eT] != 0 && edgeStates[eR] != 0 && edgeStates[eT] != edgeStates[eR]) {
                         if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false;
+                        if (clue == 2 && (edgeStates[eB] == 0 || edgeStates[eL] == 0)) {
+                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false;
+                        }
                     }
                     if (edgeStates[eB] != 0 && edgeStates[eL] != 0 && edgeStates[eB] != edgeStates[eL]) {
                         if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false;
+                        if (clue == 2 && (edgeStates[eT] == 0 || edgeStates[eR] == 0)) {
+                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false;
+                        }
                     }
                     if (edgeStates[eB] != 0 && edgeStates[eR] != 0 && edgeStates[eB] != edgeStates[eR]) {
                         if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false;
+                        if (clue == 2 && (edgeStates[eT] == 0 || edgeStates[eL] == 0)) {
+                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false;
+                        }
                     }
                     
                     if (clue == 2) {
@@ -1254,24 +1324,6 @@ static inline bool deductIncremental() {
                             if (edgeStates[oppL] == -1) { if (!setEdgeState(oppT, 1)) return false; }
                         }
                     }
-                }
-                // 5. Diagonal 2s Propagation Rule
-                bool sle_TL = (eT != -1) && ((edgeStates[eL] == 1 && edgeStates[eT] == -1) || (edgeStates[eL] == -1 && edgeStates[eT] == 1));
-                bool sle_TR = (eT != -1) && ((edgeStates[eR] == 1 && edgeStates[eT] == -1) || (edgeStates[eR] == -1 && edgeStates[eT] == 1));
-                bool sle_BL = (eB != -1) && ((edgeStates[eL] == 1 && edgeStates[eB] == -1) || (edgeStates[eL] == -1 && edgeStates[eB] == 1));
-                bool sle_BR = (eB != -1) && ((edgeStates[eR] == 1 && edgeStates[eB] == -1) || (edgeStates[eR] == -1 && edgeStates[eB] == 1));
-
-                if (sle_BR && getClue(r - 1, c - 1) == 2) {
-                    if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false;
-                }
-                if (sle_BL && getClue(r - 1, c) == 2) {
-                    if (!propagateDiagonal2s(r - 1, c, -1, 1)) return false;
-                }
-                if (sle_TR && getClue(r, c - 1) == 2) {
-                    if (!propagateDiagonal2s(r, c - 1, 1, -1)) return false;
-                }
-                if (sle_TL && getClue(r, c) == 2) {
-                    if (!propagateDiagonal2s(r, c, 1, 1)) return false;
                 }
             }
         }
