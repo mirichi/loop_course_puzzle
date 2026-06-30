@@ -456,6 +456,28 @@ static bool applyStaticRules() {
                     int below = getVEdgeIndex(r + 1, c + 1);
                     if (above != -1 && !setEdgeState(above, -1)) return false;
                     if (below != -1 && !setEdgeState(below, -1)) return false;
+                    
+                    // Rule 2.1b: 3-3 Orthogonal with adjacent 2
+                    // Above left 3
+                    if (r - 1 >= 0 && clues[(r - 1) * cols + c] == 2) {
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c), 1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r, c - 1), -1)) return false;
+                    }
+                    // Above right 3
+                    if (r - 1 >= 0 && clues[(r - 1) * cols + c + 1] == 2) {
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c + 1), 1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r, c + 2), -1)) return false;
+                    }
+                    // Below left 3
+                    if (r + 1 < rows && clues[(r + 1) * cols + c] == 2) {
+                        if (!setEdgeState(getHEdgeIndex(r + 2, c), 1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), -1)) return false;
+                    }
+                    // Below right 3
+                    if (r + 1 < rows && clues[(r + 1) * cols + c + 1] == 2) {
+                        if (!setEdgeState(getHEdgeIndex(r + 2, c + 1), 1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c + 2), -1)) return false;
+                    }
                 }
                 if (r + 1 < rows && clues[(r + 1) * cols + c] == 3) {
                     int shared = getHEdgeIndex(r + 1, c);
@@ -469,30 +491,236 @@ static bool applyStaticRules() {
                     int rightwards = getHEdgeIndex(r + 1, c + 1);
                     if (leftwards != -1 && !setEdgeState(leftwards, -1)) return false;
                     if (rightwards != -1 && !setEdgeState(rightwards, -1)) return false;
+                    
+                    // Rule 2.1b: 3-3 Orthogonal with adjacent 2
+                    // Left of top 3
+                    if (c - 1 >= 0 && clues[r * cols + c - 1] == 2) {
+                        if (!setEdgeState(getVEdgeIndex(r, c - 1), 1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c), -1)) return false;
+                    }
+                    // Left of bottom 3
+                    if (c - 1 >= 0 && clues[(r + 1) * cols + c - 1] == 2) {
+                        if (!setEdgeState(getVEdgeIndex(r + 1, c - 1), 1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r + 2, c), -1)) return false;
+                    }
+                    // Right of top 3
+                    if (c + 1 < cols && clues[r * cols + c + 1] == 2) {
+                        if (!setEdgeState(getVEdgeIndex(r, c + 2), 1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) return false;
+                    }
+                    // Right of bottom 3
+                    if (c + 1 < cols && clues[(r + 1) * cols + c + 1] == 2) {
+                        if (!setEdgeState(getVEdgeIndex(r + 1, c + 2), 1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r + 2, c + 1), -1)) return false;
+                    }
                 }
             }
             
-            // Rule 2.2: Diagonally Adjacent 3-3 Cells
+            // Rule 2.1c: Clue 3 surrounded by two 1s forming a corner
             if (clue == 3) {
-                if (r + 1 < rows && c + 1 < cols && clues[(r + 1) * cols + (c + 1)] == 3) {
-                    int tA = getHEdgeIndex(r, c);
-                    int lA = getVEdgeIndex(r, c);
-                    int bB = getHEdgeIndex(r + 2, c + 1);
-                    int rB = getVEdgeIndex(r + 1, c + 2);
-                    if (!setEdgeState(tA, 1)) return false;
-                    if (!setEdgeState(lA, 1)) return false;
-                    if (!setEdgeState(bB, 1)) return false;
-                    if (!setEdgeState(rB, 1)) return false;
+                // Top-Right Corner (1 at Top, 1 at Right)
+                if (r - 1 >= 0 && c + 1 < cols && clues[(r - 1) * cols + c] == 1 && clues[r * cols + c + 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false; // Top of Top 1
+                    if (!setEdgeState(getVEdgeIndex(r - 1, c), -1)) return false; // Left of Top 1
+                    if (!setEdgeState(getVEdgeIndex(r, c + 2), -1)) return false; // Right of Right 1
+                    if (!setEdgeState(getHEdgeIndex(r + 1, c + 1), -1)) return false; // Bottom of Right 1
                 }
-                if (r + 1 < rows && c - 1 >= 0 && clues[(r + 1) * cols + (c - 1)] == 3) {
-                    int tA = getHEdgeIndex(r, c);
-                    int rA = getVEdgeIndex(r, c + 1);
-                    int bB = getHEdgeIndex(r + 2, c - 1);
-                    int lB = getVEdgeIndex(r + 1, c - 1);
-                    if (!setEdgeState(tA, 1)) return false;
-                    if (!setEdgeState(rA, 1)) return false;
-                    if (!setEdgeState(bB, 1)) return false;
-                    if (!setEdgeState(lB, 1)) return false;
+                // Top-Left Corner (1 at Top, 1 at Left)
+                if (r - 1 >= 0 && c - 1 >= 0 && clues[(r - 1) * cols + c] == 1 && clues[r * cols + c - 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false; // Top of Top 1
+                    if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) return false; // Right of Top 1
+                    if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) return false; // Left of Left 1
+                    if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), -1)) return false; // Bottom of Left 1
+                }
+                // Bottom-Left Corner (1 at Bottom, 1 at Left)
+                if (r + 1 < rows && c - 1 >= 0 && clues[(r + 1) * cols + c] == 1 && clues[r * cols + c - 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r + 2, c), -1)) return false; // Bottom of Bottom 1
+                    if (!setEdgeState(getVEdgeIndex(r + 1, c + 1), -1)) return false; // Right of Bottom 1
+                    if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) return false; // Left of Left 1
+                    if (!setEdgeState(getHEdgeIndex(r, c - 1), -1)) return false; // Top of Left 1
+                }
+                // Bottom-Right Corner (1 at Bottom, 1 at Right)
+                if (r + 1 < rows && c + 1 < cols && clues[(r + 1) * cols + c] == 1 && clues[r * cols + c + 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r + 2, c), -1)) return false; // Bottom of Bottom 1
+                    if (!setEdgeState(getVEdgeIndex(r + 1, c), -1)) return false; // Left of Bottom 1
+                    if (!setEdgeState(getVEdgeIndex(r, c + 2), -1)) return false; // Right of Right 1
+                    if (!setEdgeState(getHEdgeIndex(r, c + 1), -1)) return false; // Top of Right 1
+                }
+            }
+            
+            // Rule 2.1d: 1 and 3 adjacent along the grid border
+            if (clue == 3) {
+                // Top border
+                if (r == 0) {
+                    if (c - 1 >= 0 && clues[0 * cols + c - 1] == 1) { // 1 is on the left
+                        if (!setEdgeState(getHEdgeIndex(0, c), 1)) return false; // Top of 3
+                        if (!setEdgeState(getVEdgeIndex(0, c - 1), -1)) return false; // Left of 1
+                        if (!setEdgeState(getHEdgeIndex(1, c - 1), -1)) return false; // Bottom of 1
+                    }
+                    if (c + 1 < cols && clues[0 * cols + c + 1] == 1) { // 1 is on the right
+                        if (!setEdgeState(getHEdgeIndex(0, c), 1)) return false; // Top of 3
+                        if (!setEdgeState(getVEdgeIndex(0, c + 2), -1)) return false; // Right of 1
+                        if (!setEdgeState(getHEdgeIndex(1, c + 1), -1)) return false; // Bottom of 1
+                    }
+                }
+                // Bottom border
+                if (r == rows - 1) {
+                    if (c - 1 >= 0 && clues[(rows - 1) * cols + c - 1] == 1) { // 1 is on the left
+                        if (!setEdgeState(getHEdgeIndex(rows, c), 1)) return false; // Bottom of 3
+                        if (!setEdgeState(getVEdgeIndex(rows - 1, c - 1), -1)) return false; // Left of 1
+                        if (!setEdgeState(getHEdgeIndex(rows - 1, c - 1), -1)) return false; // Top of 1
+                    }
+                    if (c + 1 < cols && clues[(rows - 1) * cols + c + 1] == 1) { // 1 is on the right
+                        if (!setEdgeState(getHEdgeIndex(rows, c), 1)) return false; // Bottom of 3
+                        if (!setEdgeState(getVEdgeIndex(rows - 1, c + 2), -1)) return false; // Right of 1
+                        if (!setEdgeState(getHEdgeIndex(rows - 1, c + 1), -1)) return false; // Top of 1
+                    }
+                }
+                // Left border
+                if (c == 0) {
+                    if (r - 1 >= 0 && clues[(r - 1) * cols + 0] == 1) { // 1 is above
+                        if (!setEdgeState(getVEdgeIndex(r, 0), 1)) return false; // Left of 3
+                        if (!setEdgeState(getHEdgeIndex(r - 1, 0), -1)) return false; // Top of 1
+                        if (!setEdgeState(getVEdgeIndex(r - 1, 1), -1)) return false; // Right of 1
+                    }
+                    if (r + 1 < rows && clues[(r + 1) * cols + 0] == 1) { // 1 is below
+                        if (!setEdgeState(getVEdgeIndex(r, 0), 1)) return false; // Left of 3
+                        if (!setEdgeState(getHEdgeIndex(r + 2, 0), -1)) return false; // Bottom of 1
+                        if (!setEdgeState(getVEdgeIndex(r + 1, 1), -1)) return false; // Right of 1
+                    }
+                }
+                // Right border
+                if (c == cols - 1) {
+                    if (r - 1 >= 0 && clues[(r - 1) * cols + cols - 1] == 1) { // 1 is above
+                        if (!setEdgeState(getVEdgeIndex(r, cols), 1)) return false; // Right of 3
+                        if (!setEdgeState(getHEdgeIndex(r - 1, cols - 1), -1)) return false; // Top of 1
+                        if (!setEdgeState(getVEdgeIndex(r - 1, cols - 1), -1)) return false; // Left of 1
+                    }
+                    if (r + 1 < rows && clues[(r + 1) * cols + cols - 1] == 1) { // 1 is below
+                        if (!setEdgeState(getVEdgeIndex(r, cols), 1)) return false; // Right of 3
+                        if (!setEdgeState(getHEdgeIndex(r + 2, cols - 1), -1)) return false; // Bottom of 1
+                        if (!setEdgeState(getVEdgeIndex(r + 1, cols - 1), -1)) return false; // Left of 1
+                    }
+                }
+            }
+            
+            // Rule 2.1e: 3-2-3 along the grid border
+            if (clue == 2 && rows * cols > 3) {
+                // Top border
+                if (r == 0 && c - 1 >= 0 && c + 1 < cols && clues[0 * cols + c - 1] == 3 && clues[0 * cols + c + 1] == 3) {
+                    if (!setEdgeState(getHEdgeIndex(1, c), -1)) return false; // Bottom of 2
+                }
+                // Bottom border
+                if (r == rows - 1 && c - 1 >= 0 && c + 1 < cols && clues[(rows - 1) * cols + c - 1] == 3 && clues[(rows - 1) * cols + c + 1] == 3) {
+                    if (!setEdgeState(getHEdgeIndex(rows - 1, c), -1)) return false; // Top of 2
+                }
+                // Left border
+                if (c == 0 && r - 1 >= 0 && r + 1 < rows && clues[(r - 1) * cols + 0] == 3 && clues[(r + 1) * cols + 0] == 3) {
+                    if (!setEdgeState(getVEdgeIndex(r, 1), -1)) return false; // Right of 2
+                }
+                // Right border
+                if (c == cols - 1 && r - 1 >= 0 && r + 1 < rows && clues[(r - 1) * cols + cols - 1] == 3 && clues[(r + 1) * cols + cols - 1] == 3) {
+                    if (!setEdgeState(getVEdgeIndex(r, cols - 1), -1)) return false; // Left of 2
+                }
+            }
+            
+            // Rule 2.1f: 2 surrounded by three 1s
+            if (clue == 2) {
+                // Top, Left, Right are 1s -> Top of Top 1 is X
+                if (r - 1 >= 0 && c - 1 >= 0 && c + 1 < cols && 
+                    clues[(r - 1) * cols + c] == 1 && clues[r * cols + c - 1] == 1 && clues[r * cols + c + 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false;
+                }
+                // Bottom, Left, Right are 1s -> Bottom of Bottom 1 is X
+                if (r + 1 < rows && c - 1 >= 0 && c + 1 < cols && 
+                    clues[(r + 1) * cols + c] == 1 && clues[r * cols + c - 1] == 1 && clues[r * cols + c + 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r + 2, c), -1)) return false;
+                }
+                // Left, Top, Bottom are 1s -> Left of Left 1 is X
+                if (c - 1 >= 0 && r - 1 >= 0 && r + 1 < rows && 
+                    clues[r * cols + c - 1] == 1 && clues[(r - 1) * cols + c] == 1 && clues[(r + 1) * cols + c] == 1) {
+                    if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) return false;
+                }
+                // Right, Top, Bottom are 1s -> Right of Right 1 is X
+                if (c + 1 < cols && r - 1 >= 0 && r + 1 < rows && 
+                    clues[r * cols + c + 1] == 1 && clues[(r - 1) * cols + c] == 1 && clues[(r + 1) * cols + c] == 1) {
+                    if (!setEdgeState(getVEdgeIndex(r, c + 2), -1)) return false;
+                }
+            }
+            
+            // Rule 2.1g: 1-1 adjacent along the grid border
+            if (clue == 1) {
+                // Horizontal adjacency (along Top or Bottom border)
+                if (r == 0 || r == rows - 1) {
+                    if (c + 1 < cols && clues[r * cols + c + 1] == 1) {
+                        if (!setEdgeState(getVEdgeIndex(r, c + 1), -1)) return false; // Shared vertical edge
+                    }
+                }
+                // Vertical adjacency (along Left or Right border)
+                if (c == 0 || c == cols - 1) {
+                    if (r + 1 < rows && clues[(r + 1) * cols + c] == 1) {
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c), -1)) return false; // Shared horizontal edge
+                    }
+                }
+            }
+            
+            // Rule 2.2: Generalized Diagonal Chains (3-2...2-3 and 3-2...2-0)
+            if (clue == 3) {
+                int drs[] = {-1, -1, 1, 1};
+                int dcs[] = {-1, 1, -1, 1};
+                for (int i = 0; i < 4; i++) {
+                    int dr = drs[i];
+                    int dc = dcs[i];
+                    int er = r + dr;
+                    int ec = c + dc;
+                    while (er >= 0 && er < rows && ec >= 0 && ec < cols && clues[er * cols + ec] == 2) {
+                        er += dr;
+                        ec += dc;
+                    }
+                    if (er >= 0 && er < rows && ec >= 0 && ec < cols) {
+                        if (clues[er * cols + ec] == 3) {
+                            // 3-2...2-3 Chain: Outer edges of the starting 3 are lines.
+                            int startOuterH = (dr == 1) ? getHEdgeIndex(r, c) : getHEdgeIndex(r + 1, c);
+                            int startOuterV = (dc == 1) ? getVEdgeIndex(r, c) : getVEdgeIndex(r, c + 1);
+                            if (!setEdgeState(startOuterH, 1)) return false;
+                            if (!setEdgeState(startOuterV, 1)) return false;
+                            
+                            // Set external edges at the corner to crosses
+                            int cornerR = (dr == 1) ? r : r + 1;
+                            int cornerC = (dc == 1) ? c : c + 1;
+                            int extV = (dr == 1) ? getVEdgeIndex(r - 1, cornerC) : getVEdgeIndex(r + 1, cornerC);
+                            int extH = (dc == 1) ? getHEdgeIndex(cornerR, c - 1) : getHEdgeIndex(cornerR, c + 1);
+                            if (!setEdgeState(extV, -1)) return false;
+                            if (!setEdgeState(extH, -1)) return false;
+                        } else if (clues[er * cols + ec] == 0) {
+                            // 3-2...2-0 Chain: Edges facing 0 are lines, edges facing 3 are crosses.
+                            // For the 3:
+                            int startInnerH = (dr == 1) ? getHEdgeIndex(r + 1, c) : getHEdgeIndex(r, c);
+                            int startInnerV = (dc == 1) ? getVEdgeIndex(r, c + 1) : getVEdgeIndex(r, c);
+                            if (!setEdgeState(startInnerH, 1)) return false;
+                            if (!setEdgeState(startInnerV, 1)) return false;
+                            
+                            // For the 2s:
+                            int tr = r + dr;
+                            int tc = c + dc;
+                            while (tr != er) {
+                                // Edges facing 0 (inner) -> Lines
+                                int innerH = (dr == 1) ? getHEdgeIndex(tr + 1, tc) : getHEdgeIndex(tr, tc);
+                                int innerV = (dc == 1) ? getVEdgeIndex(tr, tc + 1) : getVEdgeIndex(tr, tc);
+                                if (!setEdgeState(innerH, 1)) return false;
+                                if (!setEdgeState(innerV, 1)) return false;
+                                
+                                // Edges facing 3 (outer) -> Crosses
+                                int outerH = (dr == 1) ? getHEdgeIndex(tr, tc) : getHEdgeIndex(tr + 1, tc);
+                                int outerV = (dc == 1) ? getVEdgeIndex(tr, tc) : getVEdgeIndex(tr, tc + 1);
+                                if (!setEdgeState(outerH, -1)) return false;
+                                if (!setEdgeState(outerV, -1)) return false;
+                                
+                                tr += dr;
+                                tc += dc;
+                            }
+                        }
+                    }
                 }
             }
             
@@ -581,6 +809,65 @@ static bool applyStaticRules() {
             }
         }
     }
+    
+    // Rule 2.6: Clue 3, 1, 2 in Grid Corners
+    // Top-Left
+    int clueCorner = clues[0];
+    if (clueCorner != -1) {
+        if (clueCorner == 3) {
+            if (!setEdgeState(getHEdgeIndex(0, 0), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(0, 0), 1)) return false;
+        } else if (clueCorner == 1) {
+            if (!setEdgeState(getHEdgeIndex(0, 0), -1)) return false;
+            if (!setEdgeState(getVEdgeIndex(0, 0), -1)) return false;
+        } else if (clueCorner == 2) {
+            if (cols > 1 && !setEdgeState(getHEdgeIndex(0, 1), 1)) return false;
+            if (rows > 1 && !setEdgeState(getVEdgeIndex(1, 0), 1)) return false;
+        }
+    }
+    // Top-Right
+    clueCorner = clues[cols - 1];
+    if (clueCorner != -1) {
+        if (clueCorner == 3) {
+            if (!setEdgeState(getHEdgeIndex(0, cols - 1), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(0, cols), 1)) return false;
+        } else if (clueCorner == 1) {
+            if (!setEdgeState(getHEdgeIndex(0, cols - 1), -1)) return false;
+            if (!setEdgeState(getVEdgeIndex(0, cols), -1)) return false;
+        } else if (clueCorner == 2) {
+            if (cols > 1 && !setEdgeState(getHEdgeIndex(0, cols - 2), 1)) return false;
+            if (rows > 1 && !setEdgeState(getVEdgeIndex(1, cols), 1)) return false;
+        }
+    }
+    // Bottom-Left
+    clueCorner = clues[(rows - 1) * cols];
+    if (clueCorner != -1) {
+        if (clueCorner == 3) {
+            if (!setEdgeState(getHEdgeIndex(rows, 0), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(rows - 1, 0), 1)) return false;
+        } else if (clueCorner == 1) {
+            if (!setEdgeState(getHEdgeIndex(rows, 0), -1)) return false;
+            if (!setEdgeState(getVEdgeIndex(rows - 1, 0), -1)) return false;
+        } else if (clueCorner == 2) {
+            if (cols > 1 && !setEdgeState(getHEdgeIndex(rows, 1), 1)) return false;
+            if (rows > 1 && !setEdgeState(getVEdgeIndex(rows - 2, 0), 1)) return false;
+        }
+    }
+    // Bottom-Right
+    clueCorner = clues[(rows - 1) * cols + cols - 1];
+    if (clueCorner != -1) {
+        if (clueCorner == 3) {
+            if (!setEdgeState(getHEdgeIndex(rows, cols - 1), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(rows - 1, cols), 1)) return false;
+        } else if (clueCorner == 1) {
+            if (!setEdgeState(getHEdgeIndex(rows, cols - 1), -1)) return false;
+            if (!setEdgeState(getVEdgeIndex(rows - 1, cols), -1)) return false;
+        } else if (clueCorner == 2) {
+            if (cols > 1 && !setEdgeState(getHEdgeIndex(rows, cols - 2), 1)) return false;
+            if (rows > 1 && !setEdgeState(getVEdgeIndex(rows - 2, cols), 1)) return false;
+        }
+    }
+
     return true;
 }
 
@@ -812,8 +1099,7 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
 }
 
 // Returns true if assuming cell (r,c) passes 0 lines to dot in direction (dr, dc) causes a contradiction.
-static inline int checkDiagonalChain(int r, int c, int dr, int dc) {
-    int startClue = getClue(r, c);
+static inline int checkDiagonalChain(int startClue, int r, int c, int dr, int dc) {
     int curr_r = r + dr;
     int curr_c = c + dc;
     while (getClue(curr_r, curr_c) == 2) {
@@ -924,19 +1210,19 @@ static inline bool deductIncremental() {
                         
                         int status;
                         // Down-Right dot is eB, eR. Opposite is eT, eL.
-                        status = checkDiagonalChain(r, c, 1, 1);
+                        status = checkDiagonalChain(clue, r, c, 1, 1);
                         if (status & 1) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
                         if (status & 2) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
                         // Down-Left dot is eB, eL. Opposite is eT, eR.
-                        status = checkDiagonalChain(r, c, 1, -1);
+                        status = checkDiagonalChain(clue, r, c, 1, -1);
                         if (status & 1) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
                         if (status & 2) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
                         // Up-Right dot is eT, eR. Opposite is eB, eL.
-                        status = checkDiagonalChain(r, c, -1, 1);
+                        status = checkDiagonalChain(clue, r, c, -1, 1);
                         if (status & 1) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
                         if (status & 2) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
                         // Up-Left dot is eT, eL. Opposite is eB, eR.
-                        status = checkDiagonalChain(r, c, -1, -1);
+                        status = checkDiagonalChain(clue, r, c, -1, -1);
                         if (status & 1) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
                         if (status & 2) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
 
@@ -953,19 +1239,19 @@ static inline bool deductIncremental() {
                         
                         int status;
                         // Down-Right dot is eB, eR. Opposite is eT, eL.
-                        status = checkDiagonalChain(r, c, 1, 1);
+                        status = checkDiagonalChain(clue, r, c, 1, 1);
                         if (status & 1) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
                         if (status & 2) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
                         // Down-Left dot is eB, eL. Opposite is eT, eR.
-                        status = checkDiagonalChain(r, c, 1, -1);
+                        status = checkDiagonalChain(clue, r, c, 1, -1);
                         if (status & 1) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
                         if (status & 2) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
                         // Up-Right dot is eT, eR. Opposite is eB, eL.
-                        status = checkDiagonalChain(r, c, -1, 1);
+                        status = checkDiagonalChain(clue, r, c, -1, 1);
                         if (status & 1) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
                         if (status & 2) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
                         // Up-Left dot is eT, eL. Opposite is eB, eR.
-                        status = checkDiagonalChain(r, c, -1, -1);
+                        status = checkDiagonalChain(clue, r, c, -1, -1);
                         if (status & 1) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
                         if (status & 2) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
 
@@ -1004,55 +1290,55 @@ static inline bool deductIncremental() {
                             if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; // Down-Left
                         }
                         
-                        int status;
-                        // Down-Right dot is eB, eR. Opposite is eT, eL.
-                        status = checkDiagonalChain(r, c, 1, 1);
-                        if (status & 1) {
-                            if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                            if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                        }
-                        if (status & 2) {
-                            if (edgeStates[eB] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                            if (edgeStates[eR] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                            if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
-                            if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
-                        }
-                        // Down-Left dot is eB, eL. Opposite is eT, eR.
-                        status = checkDiagonalChain(r, c, 1, -1);
-                        if (status & 1) {
-                            if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                            if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                        }
-                        if (status & 2) {
-                            if (edgeStates[eB] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                            if (edgeStates[eL] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                            if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
-                            if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
-                        }
-                        // Up-Right dot is eT, eR. Opposite is eB, eL.
-                        status = checkDiagonalChain(r, c, -1, 1);
-                        if (status & 1) {
-                            if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                            if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                        }
-                        if (status & 2) {
-                            if (edgeStates[eT] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                            if (edgeStates[eR] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                            if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
-                            if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
-                        }
-                        // Up-Left dot is eT, eL. Opposite is eB, eR.
-                        status = checkDiagonalChain(r, c, -1, -1);
-                        if (status & 1) {
-                            if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                            if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                        }
-                        if (status & 2) {
-                            if (edgeStates[eT] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                            if (edgeStates[eL] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                            if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
-                            if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
-                        }
+                        // int status;
+                        // // Down-Right dot is eB, eR. Opposite is eT, eL.
+                        // status = checkDiagonalChain(r, c, 1, 1);
+                        // if (status & 1) {
+                        //     if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
+                        //     if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
+                        // }
+                        // if (status & 2) {
+                        //     if (edgeStates[eB] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
+                        //     if (edgeStates[eR] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                        //     if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
+                        //     if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
+                        // }
+                        // // Down-Left dot is eB, eL. Opposite is eT, eR.
+                        // status = checkDiagonalChain(r, c, 1, -1);
+                        // if (status & 1) {
+                        //     if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
+                        //     if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
+                        // }
+                        // if (status & 2) {
+                        //     if (edgeStates[eB] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
+                        //     if (edgeStates[eL] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                        //     if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
+                        //     if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
+                        // }
+                        // // Up-Right dot is eT, eR. Opposite is eB, eL.
+                        // status = checkDiagonalChain(r, c, -1, 1);
+                        // if (status & 1) {
+                        //     if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
+                        //     if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                        // }
+                        // if (status & 2) {
+                        //     if (edgeStates[eT] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
+                        //     if (edgeStates[eR] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
+                        //     if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
+                        //     if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
+                        // }
+                        // // Up-Left dot is eT, eL. Opposite is eB, eR.
+                        // status = checkDiagonalChain(r, c, -1, -1);
+                        // if (status & 1) {
+                        //     if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
+                        //     if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
+                        // }
+                        // if (status & 2) {
+                        //     if (edgeStates[eT] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
+                        //     if (edgeStates[eL] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
+                        //     if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
+                        //     if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
+                        // }
                     }
                     
                     // Universal SLE Propagation
@@ -1272,57 +1558,111 @@ static inline bool deductIncremental() {
                     }
                 }
                 
-                // 4. Generalized Rule: Line entering a 2 corner with opposite cross
+                // 4. Generalized Rule: Line entering a 2 corner with opposite known
                 // Bottom-Right cell (cr=r, cc=c)
                 if (getClue(r, c) == 2) {
-                    if ((edgeStates[eL] == 1) || (edgeStates[eT] == 1)) {
-                        int oppB = getHEdgeIndex(r + 1, c);
-                        int oppR = getVEdgeIndex(r, c + 1);
-                        if (edgeStates[oppB] == -1 || edgeStates[oppR] == -1) {
-                            if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
-                            if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
-                            if (edgeStates[oppB] == -1) { if (!setEdgeState(oppR, 1)) return false; }
-                            if (edgeStates[oppR] == -1) { if (!setEdgeState(oppB, 1)) return false; }
-                        }
+                    bool entered = (edgeStates[eL] == 1 && edgeStates[eT] == -1) || (edgeStates[eL] == -1 && edgeStates[eT] == 1);
+                    bool entering_possible = (edgeStates[eL] == 1 && edgeStates[eT] == 0) || (edgeStates[eL] == 0 && edgeStates[eT] == 1);
+                    int oppB = getHEdgeIndex(r + 1, c);
+                    int oppR = getVEdgeIndex(r, c + 1);
+                    if (entering_possible && (edgeStates[oppB] == -1 || edgeStates[oppR] == -1)) {
+                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
+                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
+                        entered = true;
+                    }
+                    if (entered) {
+                        if (edgeStates[oppB] == -1) { if (!setEdgeState(oppR, 1)) return false; }
+                        else if (edgeStates[oppB] == 1) { if (!setEdgeState(oppR, -1)) return false; }
+                        if (edgeStates[oppR] == -1) { if (!setEdgeState(oppB, 1)) return false; }
+                        else if (edgeStates[oppR] == 1) { if (!setEdgeState(oppB, -1)) return false; }
                     }
                 }
                 // Bottom-Left cell (cr=r, cc=c-1)
                 if (getClue(r, c - 1) == 2) {
-                    if ((edgeStates[eR] == 1) || (edgeStates[eT] == 1)) {
-                        int oppB = getHEdgeIndex(r + 1, c - 1);
-                        int oppL = getVEdgeIndex(r, c - 1);
-                        if (edgeStates[oppB] == -1 || edgeStates[oppL] == -1) {
-                            if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
-                            if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
-                            if (edgeStates[oppB] == -1) { if (!setEdgeState(oppL, 1)) return false; }
-                            if (edgeStates[oppL] == -1) { if (!setEdgeState(oppB, 1)) return false; }
-                        }
+                    bool entered = (edgeStates[eR] == 1 && edgeStates[eT] == -1) || (edgeStates[eR] == -1 && edgeStates[eT] == 1);
+                    bool entering_possible = (edgeStates[eR] == 1 && edgeStates[eT] == 0) || (edgeStates[eR] == 0 && edgeStates[eT] == 1);
+                    int oppB = getHEdgeIndex(r + 1, c - 1);
+                    int oppL = getVEdgeIndex(r, c - 1);
+                    if (entering_possible && (edgeStates[oppB] == -1 || edgeStates[oppL] == -1)) {
+                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
+                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
+                        entered = true;
+                    }
+                    if (entered) {
+                        if (edgeStates[oppB] == -1) { if (!setEdgeState(oppL, 1)) return false; }
+                        else if (edgeStates[oppB] == 1) { if (!setEdgeState(oppL, -1)) return false; }
+                        if (edgeStates[oppL] == -1) { if (!setEdgeState(oppB, 1)) return false; }
+                        else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppB, -1)) return false; }
                     }
                 }
                 // Top-Right cell (cr=r-1, cc=c)
                 if (getClue(r - 1, c) == 2) {
-                    if ((edgeStates[eL] == 1) || (edgeStates[eB] == 1)) {
-                        int oppT = getHEdgeIndex(r - 1, c);
-                        int oppR = getVEdgeIndex(r - 1, c + 1);
-                        if (edgeStates[oppT] == -1 || edgeStates[oppR] == -1) {
-                            if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
-                            if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
-                            if (edgeStates[oppT] == -1) { if (!setEdgeState(oppR, 1)) return false; }
-                            if (edgeStates[oppR] == -1) { if (!setEdgeState(oppT, 1)) return false; }
-                        }
+                    bool entered = (edgeStates[eL] == 1 && edgeStates[eB] == -1) || (edgeStates[eL] == -1 && edgeStates[eB] == 1);
+                    bool entering_possible = (edgeStates[eL] == 1 && edgeStates[eB] == 0) || (edgeStates[eL] == 0 && edgeStates[eB] == 1);
+                    int oppT = getHEdgeIndex(r - 1, c);
+                    int oppR = getVEdgeIndex(r - 1, c + 1);
+                    if (entering_possible && (edgeStates[oppT] == -1 || edgeStates[oppR] == -1)) {
+                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
+                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
+                        entered = true;
+                    }
+                    if (entered) {
+                        if (edgeStates[oppT] == -1) { if (!setEdgeState(oppR, 1)) return false; }
+                        else if (edgeStates[oppT] == 1) { if (!setEdgeState(oppR, -1)) return false; }
+                        if (edgeStates[oppR] == -1) { if (!setEdgeState(oppT, 1)) return false; }
+                        else if (edgeStates[oppR] == 1) { if (!setEdgeState(oppT, -1)) return false; }
                     }
                 }
                 // Top-Left cell (cr=r-1, cc=c-1)
                 if (getClue(r - 1, c - 1) == 2) {
-                    if ((edgeStates[eR] == 1) || (edgeStates[eB] == 1)) {
-                        int oppT = getHEdgeIndex(r - 1, c - 1);
-                        int oppL = getVEdgeIndex(r - 1, c - 1);
-                        if (edgeStates[oppT] == -1 || edgeStates[oppL] == -1) {
-                            if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
-                            if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
-                            if (edgeStates[oppT] == -1) { if (!setEdgeState(oppL, 1)) return false; }
-                            if (edgeStates[oppL] == -1) { if (!setEdgeState(oppT, 1)) return false; }
-                        }
+                    bool entered = (edgeStates[eR] == 1 && edgeStates[eB] == -1) || (edgeStates[eR] == -1 && edgeStates[eB] == 1);
+                    bool entering_possible = (edgeStates[eR] == 1 && edgeStates[eB] == 0) || (edgeStates[eR] == 0 && edgeStates[eB] == 1);
+                    int oppT = getHEdgeIndex(r - 1, c - 1);
+                    int oppL = getVEdgeIndex(r - 1, c - 1);
+                    if (entering_possible && (edgeStates[oppT] == -1 || edgeStates[oppL] == -1)) {
+                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
+                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
+                        entered = true;
+                    }
+                    if (entered) {
+                        if (edgeStates[oppT] == -1) { if (!setEdgeState(oppL, 1)) return false; }
+                        else if (edgeStates[oppT] == 1) { if (!setEdgeState(oppL, -1)) return false; }
+                        if (edgeStates[oppL] == -1) { if (!setEdgeState(oppT, 1)) return false; }
+                        else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppT, -1)) return false; }
+                    }
+                }
+
+                // 5. Generalized Rule: Line entering a 1 corner
+                // Bottom-Right cell (cr=r, cc=c)
+                if (getClue(r, c) == 1) {
+                    bool entered = (edgeStates[eL] == 1 && edgeStates[eT] == -1) || (edgeStates[eL] == -1 && edgeStates[eT] == 1);
+                    if (entered) {
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c), -1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r, c + 1), -1)) return false;
+                    }
+                }
+                // Bottom-Left cell (cr=r, cc=c-1)
+                if (getClue(r, c - 1) == 1) {
+                    bool entered = (edgeStates[eR] == 1 && edgeStates[eT] == -1) || (edgeStates[eR] == -1 && edgeStates[eT] == 1);
+                    if (entered) {
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), -1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) return false;
+                    }
+                }
+                // Top-Right cell (cr=r-1, cc=c)
+                if (getClue(r - 1, c) == 1) {
+                    bool entered = (edgeStates[eL] == 1 && edgeStates[eB] == -1) || (edgeStates[eL] == -1 && edgeStates[eB] == 1);
+                    if (entered) {
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) return false;
+                    }
+                }
+                // Top-Left cell (cr=r-1, cc=c-1)
+                if (getClue(r - 1, c - 1) == 1) {
+                    bool entered = (edgeStates[eR] == 1 && edgeStates[eB] == -1) || (edgeStates[eR] == -1 && edgeStates[eB] == 1);
+                    if (entered) {
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c - 1), -1)) return false;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), -1)) return false;
                     }
                 }
             }
