@@ -707,7 +707,7 @@ class LoopCourseGenerator {
     let keepRatio = 0.52; // Default for easy
     if (difficulty === 'medium') keepRatio = 0.42;
     if (difficulty === 'hard') keepRatio = 0.22;
-    if (difficulty === 'expert') keepRatio = 0.15; // Expert: 15% remaining clues
+    if (difficulty === 'expert' || difficulty === 'master') keepRatio = 0.15; // JS generator isn't smart enough for 0.0
     
     const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
     let currentClueCount = 0;
