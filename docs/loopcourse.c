@@ -58,6 +58,34 @@ static int adj[MAX_DOTS][4];
 static int adjCount[MAX_DOTS];
 static bool visitedDots[MAX_DOTS];
 
+// GF(2) Area Parity Solver memory
+#define MAX_GF2_EQS 3500
+#define MAX_GF2_VARS 3500
+#define MAX_GF2_WORDS ((MAX_GF2_VARS + 63) / 64)
+
+static uint64_t global_gf2_matrix[MAX_GF2_EQS][MAX_GF2_WORDS];
+static uint8_t global_gf2_constants[MAX_GF2_EQS];
+static int global_gf2_pivot[MAX_GF2_EQS];
+static int global_gf2_num_eqs;
+static int global_gf2_num_vars;
+static int global_gf2_words;
+
+static int gf2_update_queue[MAX_EDGES];
+static int gf2_queue_head = 0;
+static int gf2_queue_tail = 0;
+
+static uint64_t backupStackGF2Matrix[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS][MAX_GF2_WORDS];
+static uint8_t backupStackGF2Constants[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
+static int backupStackGF2Pivot[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
+
+static uint64_t backupAfterDeductStackGF2Matrix[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS][MAX_GF2_WORDS];
+static uint8_t backupAfterDeductStackGF2Constants[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
+static int backupAfterDeductStackGF2Pivot[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
+
+static uint64_t check_gf2_matrix_backup[MAX_GF2_EQS][MAX_GF2_WORDS];
+static uint8_t check_gf2_constants_backup[MAX_GF2_EQS];
+static int check_gf2_pivot_backup[MAX_GF2_EQS];
+
 // BFS cell queue arrays
 static int queueR[MAX_CELLS];
 static int queueC[MAX_CELLS];
@@ -315,6 +343,8 @@ static inline bool setEdgeState(int edgeIdx, int8_t state) {
         pushDot(r + 1, c);
     }
     
+    gf2_update_queue[gf2_queue_tail++] = edgeIdx;
+    
     return true;
 }
 
@@ -502,7 +532,210 @@ static inline bool check23CornerLogic(int r, int c) {
     return true;
 }
 
+static inline bool check22CornerLogic(int r, int c) {
+    if (!enableAdvancedAC3) return true;
+    int clue = clues[r * cols + c];
+    if (clue != 2) return true;
+
+    // Right adjacent 2
+    if (c + 1 < cols && clues[r * cols + (c + 1)] == 2) {
+        // Bottom outer corners: (r+1, c) and (r+1, c+2)
+        if (getSafeEdgeState(getVEdgeIndex(r + 1, c)) == -1 && 
+            getSafeEdgeState(getHEdgeIndex(r + 1, c - 1)) == -1 &&
+            getSafeEdgeState(getVEdgeIndex(r + 1, c + 2)) == -1 &&
+            getSafeEdgeState(getHEdgeIndex(r + 1, c + 2)) == -1) {
+            
+            if (!setEdgeState(getVEdgeIndex(r, c), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r + 1, c), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r, c + 2), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r + 1, c + 1), 1)) return false;
+        }
+        // Top outer corners: (r, c) and (r, c+2)
+        if (getSafeEdgeState(getVEdgeIndex(r - 1, c)) == -1 && 
+            getSafeEdgeState(getHEdgeIndex(r, c - 1)) == -1 &&
+            getSafeEdgeState(getVEdgeIndex(r - 1, c + 2)) == -1 &&
+            getSafeEdgeState(getHEdgeIndex(r, c + 2)) == -1) {
+            
+            if (!setEdgeState(getVEdgeIndex(r, c), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r, c), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r, c + 2), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r, c + 1), 1)) return false;
+        }
+    }
+    // Bottom adjacent 2
+    if (r + 1 < rows && clues[(r + 1) * cols + c] == 2) {
+        // Left outer corners: (r, c) and (r+2, c)
+        if (getSafeEdgeState(getVEdgeIndex(r - 1, c)) == -1 && 
+            getSafeEdgeState(getHEdgeIndex(r, c - 1)) == -1 &&
+            getSafeEdgeState(getVEdgeIndex(r + 2, c)) == -1 &&
+            getSafeEdgeState(getHEdgeIndex(r + 2, c - 1)) == -1) {
+            
+            if (!setEdgeState(getHEdgeIndex(r, c), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r, c), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r + 2, c), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r + 1, c), 1)) return false;
+        }
+        // Right outer corners: (r, c+1) and (r+2, c+1)
+        if (getSafeEdgeState(getVEdgeIndex(r - 1, c + 1)) == -1 && 
+            getSafeEdgeState(getHEdgeIndex(r, c + 1)) == -1 &&
+            getSafeEdgeState(getVEdgeIndex(r + 2, c + 1)) == -1 &&
+            getSafeEdgeState(getHEdgeIndex(r + 2, c + 1)) == -1) {
+            
+            if (!setEdgeState(getHEdgeIndex(r, c), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r, c + 1), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r + 2, c), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r + 1, c + 1), 1)) return false;
+        }
+    }
+    return true;
+}
+
+static void initGlobalGF2() {
+    global_gf2_num_eqs = 0;
+    global_gf2_num_vars = numEdges;
+    global_gf2_words = (numEdges + 63) / 64;
+    
+    memset(global_gf2_matrix, 0, sizeof(global_gf2_matrix));
+    memset(global_gf2_constants, 0, sizeof(global_gf2_constants));
+    memset(global_gf2_pivot, -1, sizeof(global_gf2_pivot));
+    
+    // 1. Clue parity equations
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int clue = clues[r * cols + c];
+            if (clue == -1) continue;
+            
+            int edges[4];
+            getCellEdges(r, c, edges);
+            int eq_idx = global_gf2_num_eqs++;
+            for (int i = 0; i < 4; i++) {
+                int e = edges[i];
+                global_gf2_matrix[eq_idx][e / 64] |= (1ULL << (e % 64));
+            }
+            global_gf2_constants[eq_idx] = clue % 2;
+        }
+    }
+    
+    // 2. Dot parity equations
+    for (int r = 0; r <= rows; r++) {
+        for (int c = 0; c <= cols; c++) {
+            int edges[4];
+            int count = getDotEdges(r, c, edges);
+            int eq_idx = global_gf2_num_eqs++;
+            for (int i = 0; i < count; i++) {
+                int e = edges[i];
+                global_gf2_matrix[eq_idx][e / 64] |= (1ULL << (e % 64));
+            }
+            global_gf2_constants[eq_idx] = 0;
+        }
+    }
+    
+    // 3. Gaussian Elimination to RREF
+    int pivot_row = 0;
+    for (int c = 0; c < global_gf2_num_vars && pivot_row < global_gf2_num_eqs; c++) {
+        int best_r = -1;
+        for (int r = pivot_row; r < global_gf2_num_eqs; r++) {
+            if (global_gf2_matrix[r][c / 64] & (1ULL << (c % 64))) {
+                best_r = r;
+                break;
+            }
+        }
+        
+        if (best_r == -1) continue;
+        
+        if (best_r != pivot_row) {
+            for (int w = 0; w < global_gf2_words; w++) {
+                uint64_t tmp = global_gf2_matrix[pivot_row][w];
+                global_gf2_matrix[pivot_row][w] = global_gf2_matrix[best_r][w];
+                global_gf2_matrix[best_r][w] = tmp;
+            }
+            uint8_t tmp_c = global_gf2_constants[pivot_row];
+            global_gf2_constants[pivot_row] = global_gf2_constants[best_r];
+            global_gf2_constants[best_r] = tmp_c;
+        }
+        
+        global_gf2_pivot[pivot_row] = c;
+        
+        for (int r = 0; r < global_gf2_num_eqs; r++) {
+            if (r != pivot_row) {
+                if (global_gf2_matrix[r][c / 64] & (1ULL << (c % 64))) {
+                    for (int w = 0; w < global_gf2_words; w++) {
+                        global_gf2_matrix[r][w] ^= global_gf2_matrix[pivot_row][w];
+                    }
+                    global_gf2_constants[r] ^= global_gf2_constants[pivot_row];
+                }
+            }
+        }
+        pivot_row++;
+    }
+    
+    gf2_queue_head = 0;
+    gf2_queue_tail = 0;
+}
+
+static bool updateGlobalGF2(int e, int val) {
+    bool row_modified[MAX_GF2_EQS] = {false};
+    
+    for (int r = 0; r < global_gf2_num_eqs; r++) {
+        if (global_gf2_matrix[r][e / 64] & (1ULL << (e % 64))) {
+            global_gf2_matrix[r][e / 64] &= ~(1ULL << (e % 64));
+            global_gf2_constants[r] ^= val;
+            row_modified[r] = true;
+            
+            if (global_gf2_pivot[r] == e) {
+                int new_pivot = -1;
+                for (int w = 0; w < global_gf2_words; w++) {
+                    if (global_gf2_matrix[r][w] != 0) {
+                        new_pivot = w * 64 + __builtin_ctzll(global_gf2_matrix[r][w]);
+                        break;
+                    }
+                }
+                global_gf2_pivot[r] = new_pivot;
+                
+                if (new_pivot != -1) {
+                    for (int i = 0; i < global_gf2_num_eqs; i++) {
+                        if (i != r && (global_gf2_matrix[i][new_pivot / 64] & (1ULL << (new_pivot % 64)))) {
+                            for (int w = 0; w < global_gf2_words; w++) {
+                                global_gf2_matrix[i][w] ^= global_gf2_matrix[r][w];
+                            }
+                            global_gf2_constants[i] ^= global_gf2_constants[r];
+                            row_modified[i] = true;
+                        }
+                    }
+                } else {
+                    if (global_gf2_constants[r] != 0) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    
+    for (int r = 0; r < global_gf2_num_eqs; r++) {
+        if (row_modified[r] && global_gf2_pivot[r] != -1) {
+            int popcount = 0;
+            for (int w = 0; w < global_gf2_words; w++) {
+                popcount += __builtin_popcountll(global_gf2_matrix[r][w]);
+            }
+            if (popcount == 1) {
+                int p = global_gf2_pivot[r];
+                int state = (global_gf2_constants[r] == 1) ? 1 : -1;
+                if (edgeStates[p] == 0) {
+                    if (!setEdgeState(p, state)) return false;
+                } else if (edgeStates[p] != state) {
+                    return false;
+                }
+            } else if (popcount == 0) {
+                if (global_gf2_constants[r] != 0) return false;
+                global_gf2_pivot[r] = -1;
+            }
+        }
+    }
+    return true;
+}
+
 static bool applyStaticRules() {
+    initGlobalGF2();
     dbgSource = "static_rules";
 
     for (int r = 0; r < rows; r++) {
@@ -1412,6 +1645,8 @@ static inline bool runUniversalParityCheck() {
 }
 // ---------------------------------------------
 
+// Removed old O(V^3) runGF2Solver
+
 static inline bool deductIncremental() {
     int loopCount = 0;
     while (true) {
@@ -1421,7 +1656,7 @@ static inline bool deductIncremental() {
                    cellStackTop, dotStackTop);
             return false; // Force stop
         }
-        while (cellStackTop > 0 || dotStackTop > 0) {
+        while (cellStackTop > 0 || dotStackTop > 0 || gf2_queue_head < gf2_queue_tail) {
             // 1. Process cells
             int cellIdx = popCell();
             if (cellIdx != -1) {
@@ -1433,6 +1668,7 @@ static inline bool deductIncremental() {
                 int clue = clues[cellIdx];
                 if (clue != -1) {
                     if (!check23CornerLogic(r, c)) return false;
+                    if (!check22CornerLogic(r, c)) return false;
                     int cellEdges[4];
                     getCellEdges(r, c, cellEdges);
                     int lines = 0;
@@ -1966,7 +2202,6 @@ static inline bool deductIncremental() {
                         if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) return false;
                     }
                 }
-                // Top-Left cell (cr=r-1, cc=c-1)
                 if (getClue(r - 1, c - 1) == 1) {
                     bool entered = (edgeStates[eR] == 1 && edgeStates[eB] == -1) || (edgeStates[eR] == -1 && edgeStates[eB] == 1);
                     if (entered) {
@@ -1974,6 +2209,13 @@ static inline bool deductIncremental() {
                         if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), -1)) return false;
                     }
                 }
+            }
+            
+            // 3. Process GF(2)
+            if (gf2_queue_head < gf2_queue_tail) {
+                int e = gf2_update_queue[gf2_queue_head++];
+                int val = (edgeStates[e] == 1) ? 1 : 0;
+                if (!updateGlobalGF2(e, val)) return false;
             }
         }
         
@@ -2033,7 +2275,7 @@ static inline bool deductIncremental() {
                 if (!runUniversalParityCheck()) return false;
             }
             
-            if (cellStackTop == 0 && dotStackTop == 0) {
+            if (cellStackTop == 0 && dotStackTop == 0 && gf2_queue_head == gf2_queue_tail) {
                 break;
             }
         }
@@ -2185,12 +2427,19 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
 
     // Save global edge states, DSU history
     memcpy(backupStack[depth], edgeStates, numEdges);
+    memcpy(backupStackGF2Matrix[depth], global_gf2_matrix, sizeof(global_gf2_matrix));
+    memcpy(backupStackGF2Constants[depth], global_gf2_constants, sizeof(global_gf2_constants));
+    memcpy(backupStackGF2Pivot[depth], global_gf2_pivot, sizeof(global_gf2_pivot));
     int dsuCheckpoint = dsuHistoryCount;
 
     // Run logical deduction rules: full pass at depth 0, incremental pass at depth > 0
     if (depth == 0) {
         if (!deduct()) {
             memcpy(edgeStates, backupStack[depth], numEdges);
+            memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+            memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
+            memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+            gf2_queue_head = 0; gf2_queue_tail = 0;
             clearStacks();
             dsuRollback(dsuCheckpoint);
             return;
@@ -2198,6 +2447,10 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
     } else {
         if (!deductIncremental()) {
             memcpy(edgeStates, backupStack[depth], numEdges);
+            memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+            memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
+            memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+            gf2_queue_head = 0; gf2_queue_tail = 0;
             clearStacks();
             dsuRollback(dsuCheckpoint);
             return;
@@ -2220,6 +2473,10 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
             }
         }
         memcpy(edgeStates, backupStack[depth], numEdges);
+        memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+        memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
+        memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+        gf2_queue_head = 0; gf2_queue_tail = 0;
         clearStacks();
         dsuRollback(dsuCheckpoint);
         return;
@@ -2227,6 +2484,10 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
 
     if (foundSolutionsCount >= 2 || (findSingle && foundSolutionsCount >= 1)) {
         memcpy(edgeStates, backupStack[depth], numEdges);
+        memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+        memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
+        memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+        gf2_queue_head = 0; gf2_queue_tail = 0;
         clearStacks();
         dsuRollback(dsuCheckpoint);
         return;
@@ -2234,6 +2495,9 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
 
     // Save state AFTER deduction
     memcpy(backupAfterDeductStack[depth], edgeStates, numEdges);
+    memcpy(backupAfterDeductStackGF2Matrix[depth], global_gf2_matrix, sizeof(global_gf2_matrix));
+    memcpy(backupAfterDeductStackGF2Constants[depth], global_gf2_constants, sizeof(global_gf2_constants));
+    memcpy(backupAfterDeductStackGF2Pivot[depth], global_gf2_pivot, sizeof(global_gf2_pivot));
     int dsuCheckpointAfterDeduct = dsuHistoryCount;
 
     int branchIdx = -1;
@@ -2281,11 +2545,19 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
     }
     dsuRollback(dsuCheckpointAfterDeduct);
     memcpy(edgeStates, backupAfterDeductStack[depth], numEdges);
+    memcpy(global_gf2_matrix, backupAfterDeductStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+    memcpy(global_gf2_constants, backupAfterDeductStackGF2Constants[depth], sizeof(global_gf2_constants));
+    memcpy(global_gf2_pivot, backupAfterDeductStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+    gf2_queue_head = 0; gf2_queue_tail = 0;
     clearStacks();
 
     if (foundSolutionsCount >= 2 || (findSingle && foundSolutionsCount >= 1) || isTimeout) {
         dsuRollback(dsuCheckpoint);
         memcpy(edgeStates, backupStack[depth], numEdges);
+        memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+        memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
+        memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+        gf2_queue_head = 0; gf2_queue_tail = 0;
         clearStacks();
         return;
     }
@@ -2296,11 +2568,19 @@ static void backtrack(int depth, bool findSingle, int maxSteps) {
     }
     dsuRollback(dsuCheckpointAfterDeduct);
     memcpy(edgeStates, backupAfterDeductStack[depth], numEdges);
+    memcpy(global_gf2_matrix, backupAfterDeductStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+    memcpy(global_gf2_constants, backupAfterDeductStackGF2Constants[depth], sizeof(global_gf2_constants));
+    memcpy(global_gf2_pivot, backupAfterDeductStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+    gf2_queue_head = 0; gf2_queue_tail = 0;
     clearStacks();
     
     // Cleanup to restore parent state
     dsuRollback(dsuCheckpoint);
     memcpy(edgeStates, backupStack[depth], numEdges);
+    memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
+    memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
+    memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
+    gf2_queue_head = 0; gf2_queue_tail = 0;
     clearStacks();
 }
 
@@ -2457,6 +2737,39 @@ double calculateZigzagBendPenalty() {
     return totalPenalty;
 }
 
+static inline bool isEdgeConstrained(int e) {
+    int r, c, dotA, dotB;
+    if (e < numH) {
+        r = e / cols;
+        c = e % cols;
+        if (r > 0 && clues[(r - 1) * cols + c] != -1) return true;
+        if (r < rows && clues[r * cols + c] != -1) return true;
+        dotA = r * (cols + 1) + c;
+        dotB = dotA + 1;
+    } else {
+        int vIdx = e - numH;
+        r = vIdx / (cols + 1);
+        c = vIdx % (cols + 1);
+        if (c > 0 && clues[r * cols + (c - 1)] != -1) return true;
+        if (c < cols && clues[r * cols + c] != -1) return true;
+        dotA = r * (cols + 1) + c;
+        dotB = dotA + (cols + 1);
+    }
+    
+    int edges[4];
+    int count = getDotEdges(dotA / (cols + 1), dotA % (cols + 1), edges);
+    for (int i = 0; i < count; i++) {
+        if (edges[i] != e && edgeStates[edges[i]] != 0) return true;
+    }
+    
+    count = getDotEdges(dotB / (cols + 1), dotB % (cols + 1), edges);
+    for (int i = 0; i < count; i++) {
+        if (edges[i] != e && edgeStates[edges[i]] != 0) return true;
+    }
+    
+    return false;
+}
+
 int check_human_solvability() {
     dsuInitFromCurrent();
     clearStacks();
@@ -2502,10 +2815,15 @@ int check_human_solvability() {
         // 2. Perform 1-Step Lookahead on Undecided Edges
         for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
+                if (!isEdgeConstrained(i)) continue; // Prune unconstrained edges
+                
                 // Scenario A: Assume Line (1)
                 int checkpoint = dsuHistoryCount;
                 int8_t backupEdges[MAX_EDGES];
                 memcpy(backupEdges, edgeStates, numEdges);
+                memcpy(check_gf2_matrix_backup, global_gf2_matrix, sizeof(global_gf2_matrix));
+                memcpy(check_gf2_constants_backup, global_gf2_constants, sizeof(global_gf2_constants));
+                memcpy(check_gf2_pivot_backup, global_gf2_pivot, sizeof(global_gf2_pivot));
                 
                 lookaheadConfirmedCount = 0;
                 isDoingLookahead = true;
@@ -2514,6 +2832,10 @@ int check_human_solvability() {
                 
                 dsuRollback(checkpoint);
                 memcpy(edgeStates, backupEdges, numEdges);
+                memcpy(global_gf2_matrix, check_gf2_matrix_backup, sizeof(global_gf2_matrix));
+                memcpy(global_gf2_constants, check_gf2_constants_backup, sizeof(global_gf2_constants));
+                memcpy(global_gf2_pivot, check_gf2_pivot_backup, sizeof(global_gf2_pivot));
+                gf2_queue_head = 0; gf2_queue_tail = 0;
                 clearStacks();
                 
                 if (!lineSuccess) {
@@ -2526,6 +2848,9 @@ int check_human_solvability() {
                 // Scenario B: Assume Cross (-1)
                 checkpoint = dsuHistoryCount;
                 memcpy(backupEdges, edgeStates, numEdges);
+                memcpy(check_gf2_matrix_backup, global_gf2_matrix, sizeof(global_gf2_matrix));
+                memcpy(check_gf2_constants_backup, global_gf2_constants, sizeof(global_gf2_constants));
+                memcpy(check_gf2_pivot_backup, global_gf2_pivot, sizeof(global_gf2_pivot));
                 
                 lookaheadConfirmedCount = 0;
                 isDoingLookahead = true;
@@ -2534,6 +2859,10 @@ int check_human_solvability() {
                 
                 dsuRollback(checkpoint);
                 memcpy(edgeStates, backupEdges, numEdges);
+                memcpy(global_gf2_matrix, check_gf2_matrix_backup, sizeof(global_gf2_matrix));
+                memcpy(global_gf2_constants, check_gf2_constants_backup, sizeof(global_gf2_constants));
+                memcpy(global_gf2_pivot, check_gf2_pivot_backup, sizeof(global_gf2_pivot));
+                gf2_queue_head = 0; gf2_queue_tail = 0;
                 clearStacks();
                 
                 if (!crossSuccess) {
@@ -3313,45 +3642,80 @@ void generate_puzzle_wasm(const char* difficulty) {
         }
     }
 
-    // Pass 2: General removal
-    for (int i = 0; i < pairCount; i++) {
-        if (currentClueCount <= targetKeepCount) break;
+    // Pass 2: General removal (Batched)
+    int batchSize = 12;
+    int i = 0;
+    while (i < pairCount && currentClueCount > targetKeepCount) {
+        int actualBatch = 0;
+        int savedCluesA[24];
+        int savedCluesB[24];
+        int savedIndices[24];
+        int batchRemovedClues = 0;
 
-        int cellA = pairs[i].cellA;
-        if (cellA == -1) continue; // Skip if removed in Pass 1
-        int cellB = pairs[i].cellB;
-        
-        int8_t valA = clues[cellA];
-        int8_t valB = clues[cellB];
-        
-        if (valA == -1 && valB == -1) continue;
+        int b = 0;
+        for (; b < batchSize && i + b < pairCount && currentClueCount - batchRemovedClues > targetKeepCount; b++) {
+            int idx = i + b;
+            int cellA = pairs[idx].cellA;
+            if (cellA == -1) continue; // Skip if removed in Pass 1
+            int cellB = pairs[idx].cellB;
+            
+            int8_t valA = clues[cellA];
+            int8_t valB = clues[cellB];
+            
+            if (valA == -1 && valB == -1) continue;
 
-        if (strcmp(difficulty, "easy") == 0 && (valA == 3 || valB == 3) && ((double)rand() / RAND_MAX) < 0.8) {
+            if (strcmp(difficulty, "easy") == 0 && (valA == 3 || valB == 3) && ((double)rand() / RAND_MAX) < 0.8) {
+                continue;
+            }
+
+            savedCluesA[actualBatch] = valA;
+            savedCluesB[actualBatch] = valB;
+            savedIndices[actualBatch] = idx;
+            actualBatch++;
+            
+            clues[cellA] = -1;
+            clues[cellB] = -1;
+            batchRemovedClues += (cellA == cellB) ? 1 : 2;
+        }
+
+        if (actualBatch == 0) {
+            i += (b == 0) ? 1 : b;
             continue;
         }
 
-        // Try removing this pair
-        clues[cellA] = -1;
-        clues[cellB] = -1;
-        int removed = (cellA == cellB) ? 1 : 2;
-        currentClueCount -= removed;
+        currentClueCount -= batchRemovedClues;
 
-        if (!checkSolvability(difficulty)) {
-            // Restore clues if uniqueness/solvability is lost
-            clues[cellA] = valA;
-            clues[cellB] = valB;
-            currentClueCount += removed;
+        if (checkSolvability(difficulty)) {
+            // Batch removal successful
+            i += b;
+        } else {
+            // Batch failed! Rollback
+            for (int k = 0; k < actualBatch; k++) {
+                int idx = savedIndices[k];
+                int cellA = pairs[idx].cellA;
+                int cellB = pairs[idx].cellB;
+                clues[cellA] = savedCluesA[k];
+                clues[cellB] = savedCluesB[k];
+            }
+            currentClueCount += batchRemovedClues;
+            
+            if (batchSize > 1) {
+                batchSize = 1; // Permanently drop batch size to 1, loop will naturally retry with batchSize=1
+            } else {
+                // If batchSize is already 1, we just tried removing 1 pair and it failed. Skip this pair.
+                i++;
+            }
         }
 
-        if ((i + 1) % 10 == 0) {
-            printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d\n",
-                   i + 1, pairCount, currentClueCount, fastPathCount, debugTimeoutCount);
+        if ((i) % 10 == 0 || batchSize > 1) {
+            printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d | BatchSize: %d\n",
+                   i, pairCount, currentClueCount, fastPathCount, debugTimeoutCount, batchSize);
 #ifdef __EMSCRIPTEN__
             EM_ASM({
                 if (typeof self !== 'undefined' && typeof self.reportProgress === 'function') {
                     self.reportProgress($0, $1);
                 }
-            }, i + 1, pairCount);
+            }, i, pairCount);
 #endif
         }
     }
