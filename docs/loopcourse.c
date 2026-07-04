@@ -224,14 +224,12 @@ typedef struct {
 } Candidate;
 
 void init_lut();
-void init_lut1x2();
 bool applyLUT();
 
 // API functions
 EMSCRIPTEN_KEEPALIVE
 void init_grid(int r, int c) {
     init_lut();
-    init_lut1x2();
     rows = r;
     cols = c;
     numH = (r + 1) * c;
@@ -747,7 +745,6 @@ static bool updateGlobalGF2(int e, int val) {
 }
 
 #include "lut_module.h"
-#include "lut1x2_module.h"
 
 static bool applyStaticRules() {
     initGlobalGF2();
@@ -1200,12 +1197,6 @@ static bool applyStaticRules() {
 
     if (!applyLUT()) return false;
     
-    bool lut1x2_changed;
-    do {
-        lut1x2_changed = false;
-        if (!applyLUT1x2(&lut1x2_changed)) return false;
-    } while (lut1x2_changed);
-
     int afterLUT = 0;
     for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
     extern int lutEdgesTotal;
@@ -3793,3 +3784,5 @@ EMSCRIPTEN_KEEPALIVE
 int get_lookahead_count() {
     return solvabilityChecks;
 }
+
+
