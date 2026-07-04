@@ -2328,19 +2328,7 @@ bool deduct() {
     dsuInitFromCurrent();
     clearStacks();
     
-    // Push ALL relevant elements into the stacks to trigger a full AC-3 consistency check
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            if (clues[r * cols + c] != -1) {
-                pushCell(r, c);
-            }
-        }
-    }
-    for (int r = 0; r <= rows; r++) {
-        for (int c = 0; c <= cols; c++) {
-            pushDot(r, c);
-        }
-    }
+    // initial push is removed because applyStaticRules handles pushing changed elements automatically
     
     if (!applyStaticRules()) {
         return false;
@@ -2821,13 +2809,7 @@ int check_human_solvability() {
     
     lookaheadConfirmedCount = 0;
     
-    // 1. Seed AC-3 queue with all active cells/dots
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) pushCell(r, c);
-    }
-    for (int r = 0; r <= rows; r++) {
-        for (int c = 0; c <= cols; c++) pushDot(r, c);
-    }
+    // 1. Seed AC-3 queue is removed. applyStaticRules handles pushing changed elements automatically.
     
     if (!applyStaticRules()) {
         return 0; // Contradiction
