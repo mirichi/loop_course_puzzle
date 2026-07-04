@@ -1,15 +1,20 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>ループコースパズル - 極上のネオン・ループパズル</title>
   <meta name="description" content="無限に問題自動生成ができる、美しくスタイリッシュなループコースパズルゲーム。モバイル・PC両対応で快適に遊べます。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+JP:wght@300;400;700&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20260614_v30">
 </head>
+
 <body>
   <div class="app-container">
     <header class="app-header">
@@ -41,11 +46,10 @@
           <div class="control-group">
             <label for="select-difficulty">難易度</label>
             <select id="select-difficulty">
-              <option value="easy">Easy (ヒント多め)</option>
-              <option value="medium" selected>Medium (標準的)</option>
-              <option value="hard">Hard (超難問・最小ヒント)</option>
-              <option value="expert">Expert (究極・0/3優先削除)</option>
-              <option value="master">Master (限界突破・完全ランダム最小化)</option>
+              <option value="Easy">Easy (入門・サクサク解ける)</option>
+              <option value="Medium" selected>Medium (中級・定石を活用)</option>
+              <option value="Hard">Hard (上級・純粋論理の極致)</option>
+              <option value="Master">Master (究極・最高難易度)</option>
             </select>
           </div>
 
@@ -85,8 +89,8 @@
           </div>
           <div class="hud-item timer-item">
             <svg class="icon-timer" viewBox="0 0 24 24" width="18" height="18">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-              <polyline points="12,6 12,12 16,12" stroke="currentColor" stroke-width="2" fill="none"/>
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" />
+              <polyline points="12,6 12,12 16,12" stroke="currentColor" stroke-width="2" fill="none" />
             </svg>
             <span id="timer-value">00:00</span>
           </div>
@@ -102,44 +106,57 @@
           <div class="history-group">
             <button id="btn-undo" class="action-btn ripple" title="元に戻す (Ctrl + Z)" disabled>
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z" fill="currentColor"/>
+                <path
+                  d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"
+                  fill="currentColor" />
               </svg>
               <span>戻す</span>
             </button>
             <button id="btn-redo" class="action-btn ripple" title="やり直す (Ctrl + Y)" disabled>
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z" fill="currentColor"/>
+                <path
+                  d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"
+                  fill="currentColor" />
               </svg>
               <span>進む</span>
             </button>
             <button id="btn-check" class="action-btn ripple" title="間違いチェック (誤った線を赤く点滅させる)">
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" />
+                <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"
+                  stroke-linejoin="round" />
               </svg>
               <span>チェック</span>
             </button>
             <button id="btn-autocolor" class="action-btn ripple" title="自動色塗り (ループの内側を青く塗る)">
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.21-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8s1.5.67 1.5 1.5S7.33 11 6.5 11zm3-3C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3.5 3c-.83 0-1.5-.67-1.5-1.5S17.17 8 18 8s1.5.67 1.5 1.5S18.83 11 18 11z" fill="currentColor"/>
+                <path
+                  d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.21-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8s1.5.67 1.5 1.5S7.33 11 6.5 11zm3-3C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3.5 3c-.83 0-1.5-.67-1.5-1.5S17.17 8 18 8s1.5.67 1.5 1.5S18.83 11 18 11z"
+                  fill="currentColor" />
               </svg>
               <span>色塗り</span>
             </button>
             <button id="btn-reset-view" class="action-btn ripple" title="盤面の表示をリセット">
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M15 3h6v6h-2V6.41l-4.79 4.79-1.42-1.42L17.59 5H15V3zM9 21H3v-6h2v2.59l4.79-4.79 1.42 1.42L6.41 19H9v2z" fill="currentColor"/>
+                <path
+                  d="M15 3h6v6h-2V6.41l-4.79 4.79-1.42-1.42L17.59 5H15V3zM9 21H3v-6h2v2.59l4.79-4.79 1.42 1.42L6.41 19H9v2z"
+                  fill="currentColor" />
               </svg>
               <span>表示リセット</span>
             </button>
             <button id="btn-hint" class="action-btn ripple" title="ヒント (1手自動で埋める)">
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-1.3l-.85-.6C7.8 13.1 7 11.1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 2.1-.8 4.1-2.15 5.1z" fill="currentColor"/>
+                <path
+                  d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-1.3l-.85-.6C7.8 13.1 7 11.1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 2.1-.8 4.1-2.15 5.1z"
+                  fill="currentColor" />
               </svg>
               <span>ヒント</span>
             </button>
             <button id="btn-reset" class="action-btn danger ripple" title="最初からやり直す">
               <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/>
+                <path
+                  d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
+                  fill="currentColor" />
               </svg>
               <span>リセット</span>
             </button>
@@ -154,7 +171,7 @@
         <div class="victory-trophy">🏆</div>
         <h2>完成！お見事です！</h2>
         <p>すべてのヒントとループの整合性が確認されました。</p>
-        
+
         <div class="result-stats">
           <div class="stat-card">
             <span class="stat-label">経過時間</span>
@@ -173,4 +190,5 @@
   <script src="js/generator.js?v=20260624_v43"></script>
   <script src="js/game.js?v=20260624_v43"></script>
 </body>
+
 </html>

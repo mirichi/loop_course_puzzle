@@ -608,19 +608,17 @@ class LoopCourseGenerator {
       
       const totalCells = this.rows * this.cols;
       let maxSteps = 0; 
-      if (diff === 'easy') {
+      if (diff === 'Easy') {
         maxSteps = 0;
       } else {
         if (totalCells > 150) {
-          if (diff === 'medium') maxSteps = 10;
-          else if (diff === 'hard') maxSteps = 40;
-          else if (diff === 'expert') maxSteps = 80;
-          else maxSteps = 50;
+          if (diff === 'Medium') maxSteps = 10;
+          else if (diff === 'Hard') maxSteps = 40;
+          else maxSteps = 80; // Master
         } else {
-          if (diff === 'medium') maxSteps = 6;
-          else if (diff === 'hard') maxSteps = 30;
-          else if (diff === 'expert') maxSteps = 60;
-          else maxSteps = 20;
+          if (diff === 'Medium') maxSteps = 6;
+          else if (diff === 'Hard') maxSteps = 30;
+          else maxSteps = 60; // Master
         }
       }
       
@@ -704,10 +702,9 @@ class LoopCourseGenerator {
     pairs.sort((a, b) => a.priority - b.priority);
     
     // Adjust target parameters based on difficulty
-    let keepRatio = 0.52; // Default for easy
-    if (difficulty === 'medium') keepRatio = 0.42;
-    if (difficulty === 'hard') keepRatio = 0.22;
-    if (difficulty === 'expert' || difficulty === 'master') keepRatio = 0.15; // JS generator isn't smart enough for 0.0
+    let keepRatio = 0.65; // Default for easy
+    if (difficulty === 'Medium') keepRatio = 0.58;
+    if (difficulty === 'Hard' || difficulty === 'Master') keepRatio = 0.15; // JS generator isn't smart enough for 0.0
     
     const targetKeepCount = Math.floor(this.rows * this.cols * keepRatio);
     let currentClueCount = 0;
@@ -726,7 +723,7 @@ class LoopCourseGenerator {
       
       if (valA === null && valB === null) continue;
       
-      if (difficulty === 'easy' && (valA === 3 || valB === 3) && Math.random() < 0.8) {
+      if (difficulty === 'Easy' && (valA === 3 || valB === 3) && Math.random() < 0.8) {
         continue;
       }
       

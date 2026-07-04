@@ -45,6 +45,7 @@ static int8_t genCells[MAX_ROWS][MAX_COLS];
 
 // Feature Toggles for Benchmarking
 bool enableAdvancedAC3 = true;
+bool restrictLogicToLocal = false;
 
 
 // pre-allocated stack for backtracking search to avoid constant allocations
@@ -222,9 +223,15 @@ typedef struct {
     double score;
 } Candidate;
 
+void init_lut();
+void init_lut1x2();
+bool applyLUT();
+
 // API functions
 EMSCRIPTEN_KEEPALIVE
 void init_grid(int r, int c) {
+    init_lut();
+    init_lut1x2();
     rows = r;
     cols = c;
     numH = (r + 1) * c;
@@ -280,6 +287,11 @@ static inline int getDotEdges(int r, int c, int* outEdges) {
     outEdges[2] = getHEdgeIndex(r, c - 1);     // Left
     outEdges[3] = getHEdgeIndex(r, c);         // Right
     return 4;
+}
+
+static inline int8_t getEdgeState(int edgeIdx) {
+    if (edgeIdx < 0 || edgeIdx >= numEdges) return -1;
+    return edgeStates[edgeIdx];
 }
 
 static inline bool setEdgeState(int edgeIdx, int8_t state) {
@@ -734,6 +746,9 @@ static bool updateGlobalGF2(int e, int val) {
     return true;
 }
 
+#include "lut_module.h"
+#include "lut1x2_module.h"
+
 static bool applyStaticRules() {
     initGlobalGF2();
     dbgSource = "static_rules";
@@ -1177,6 +1192,24 @@ static bool applyStaticRules() {
             if (rows > 1 && !setEdgeState(getVEdgeIndex(rows - 2, cols), 1)) return false;
         }
     }
+
+    int afterStatic = 0;
+    for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterStatic++;
+    extern int staticRuleEdgesTotal;
+    staticRuleEdgesTotal += afterStatic;
+
+    if (!applyLUT()) return false;
+    
+    bool lut1x2_changed;
+    do {
+        lut1x2_changed = false;
+        if (!applyLUT1x2(&lut1x2_changed)) return false;
+    } while (lut1x2_changed);
+
+    int afterLUT = 0;
+    for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
+    extern int lutEdgesTotal;
+    lutEdgesTotal += (afterLUT - afterStatic);
 
     return true;
 }
@@ -2219,6 +2252,13 @@ static inline bool deductIncremental() {
             }
         }
         
+        if (restrictLogicToLocal) {
+            if (cellStackTop == 0 && dotStackTop == 0 && gf2_queue_head == gf2_queue_tail) {
+                break;
+            }
+            continue;
+        }
+
         // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
         if (!deductJordanCurveParity()) return false;
         if (!applyAdvanced2Rules()) return false;
@@ -2770,6 +2810,11 @@ static inline bool isEdgeConstrained(int e) {
     return false;
 }
 
+int lookaheadEdgeTests = 0;
+int staticRuleEdgesTotal = 0;
+int lutEdgesTotal = 0;
+int lookaheadForcedEdgesTotal = 0;
+
 int check_human_solvability() {
     dsuInitFromCurrent();
     clearStacks();
@@ -2810,8 +2855,12 @@ int check_human_solvability() {
             return isSolved() ? 1 : 0;
         }
         
+        if (lookaheadMaxLimit == 0) {
+            return -2; // Stalled: Lookahead is disabled for this difficulty
+        }
+
         changed = false;
-        
+
         // 2. Perform 1-Step Lookahead on Undecided Edges
         for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
@@ -2827,6 +2876,7 @@ int check_human_solvability() {
                 
                 lookaheadConfirmedCount = 0;
                 isDoingLookahead = true;
+                lookaheadEdgeTests++;
                 bool lineSuccess = setEdgeState(i, 1) && deductIncremental();
                 isDoingLookahead = false;
                 
@@ -2840,6 +2890,8 @@ int check_human_solvability() {
                 
                 if (!lineSuccess) {
                     // Line leads to contradiction -> Must be Cross (-1)
+                    extern int lookaheadForcedEdgesTotal;
+                    lookaheadForcedEdgesTotal++;
                     if (!setEdgeState(i, -1)) return 0;
                     changed = true;
                     break; // Restart main propagation loop
@@ -2854,6 +2906,7 @@ int check_human_solvability() {
                 
                 lookaheadConfirmedCount = 0;
                 isDoingLookahead = true;
+                lookaheadEdgeTests++;
                 bool crossSuccess = setEdgeState(i, -1) && deductIncremental();
                 isDoingLookahead = false;
                 
@@ -2867,13 +2920,15 @@ int check_human_solvability() {
                 
                 if (!crossSuccess) {
                     // Cross leads to contradiction -> Must be Line (1)
+                    extern int lookaheadForcedEdgesTotal;
+                    lookaheadForcedEdgesTotal++;
                     if (!setEdgeState(i, 1)) return 0;
                     changed = true;
                     break; // Restart main propagation loop
                 }
-            }
-        }
-    }
+            } // closes if (edgeStates[i] == 0)
+        } // closes for loop
+    } // closes while (changed)
     return -2; // Stalled: Not solvable by 1-step lookahead human logic
 }
 
@@ -3024,6 +3079,14 @@ static bool hasDiagonalCheckerboard(int8_t cells[MAX_ROWS][MAX_COLS]) {
     return false;
 }
 
+static int compareCandidates(const void* a, const void* b) {
+    Candidate* ca = (Candidate*)a;
+    Candidate* cb = (Candidate*)b;
+    if (cb->score > ca->score) return 1;
+    if (cb->score < ca->score) return -1;
+    return 0;
+}
+
 // Growth Loop Generator
 static void generateRandomLoop() {
     int numSectorsX = cols >= 24 ? 4 : (cols >= 8 ? 3 : 2);
@@ -3122,18 +3185,22 @@ static void generateRandomLoop() {
                         bool wouldForm4x4Inside = false;
                         for (int dy = -3; dy <= 0; dy++) {
                             for (int dx = -3; dx <= 0; dx++) {
-                                int count = 0;
+                                int brR = r + dy;
+                                int brC = c + dx;
+                                if (brR < 0 || brR + 3 >= rows || brC < 0 || brC + 3 >= cols) continue;
+                                
+                                bool blockFull = true;
                                 for (int i = 0; i < 4; i++) {
                                     for (int j = 0; j < 4; j++) {
-                                        int nr = r + dy + i;
-                                        int nc = c + dx + j;
-                                        if (nr == r && nc == c) continue;
-                                        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && genCells[nr][nc] == 1) {
-                                            count++;
+                                        if (i == -dy && j == -dx) continue;
+                                        if (genCells[brR + i][brC + j] != 1) {
+                                            blockFull = false;
+                                            break;
                                         }
                                     }
+                                    if (!blockFull) break;
                                 }
-                                if (count == 15) {
+                                if (blockFull) {
                                     wouldForm4x4Inside = true;
                                     break;
                                 }
@@ -3247,16 +3314,8 @@ static void generateRandomLoop() {
 
             if (candCount == 0) break;
 
-            // Sort candidates desc
-            for (int i = 0; i < candCount - 1; i++) {
-                for (int j = i + 1; j < candCount; j++) {
-                    if (candidates[j].score > candidates[i].score) {
-                        Candidate temp = candidates[i];
-                        candidates[i] = candidates[j];
-                        candidates[j] = temp;
-                    }
-                }
-            }
+            // Sort candidates desc using qsort (much faster than bubble sort)
+            qsort(candidates, candCount, sizeof(Candidate), compareCandidates);
 
             // Pick randomly from top pool
             int poolSize = (candCount < 3) ? candCount : 3;
@@ -3417,7 +3476,12 @@ static bool checkSolvability(const char* difficulty) {
     memset(edgeStates, 0, numEdges);
     
     int result = 0;
-    if (strcmp(difficulty, "easy") == 0) {
+    
+    // For Easy mode, disable all global rules to ensure it can be solved purely by local patterns
+    extern bool restrictLogicToLocal;
+    restrictLogicToLocal = (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0);
+
+    if (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) {
         // Easy mode: strict 0-step lookahead (pure deduction)
         bool deductSuccess = deduct();
         bool solvedSuccess = isSolved();
@@ -3437,14 +3501,12 @@ static bool checkSolvability(const char* difficulty) {
     } else {
         // Set lookahead limits based on difficulty
         lookaheadConfirmedCount = 0;
-        if (strcmp(difficulty, "medium") == 0) {
-            lookaheadMaxLimit = 3;
-        } else if (strcmp(difficulty, "hard") == 0) {
-            lookaheadMaxLimit = 3;
+        if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
+            lookaheadMaxLimit = 3; // Enable lookahead for Master
         } else {
-            lookaheadMaxLimit = 3; // expert
+            lookaheadMaxLimit = 0; // Disabled for Easy, Medium, Hard
         }
-        // Medium/Hard/Expert: 1-step lookahead human solvability check
+        // Human solvability check
         result = check_human_solvability();
         lookaheadMaxLimit = 0; // Reset limit
     }
@@ -3467,6 +3529,10 @@ EMSCRIPTEN_KEEPALIVE
 void generate_puzzle_wasm(const char* difficulty) {
     debugTimeoutCount = 0;
     debugContradictionCount = 0;
+    lookaheadEdgeTests = 0;
+    lookaheadForcedEdgesTotal = 0;
+    staticRuleEdgesTotal = 0;
+    lutEdgesTotal = 0;
     
     printf("[C Debug] Starting generate_puzzle_wasm. diff=%s, rows=%d, cols=%d\n", difficulty, rows, cols);
 
@@ -3527,10 +3593,10 @@ void generate_puzzle_wasm(const char* difficulty) {
     hasDbgTarget = true;
 
     // Determine target remaining clues based on difficulty
-    double keepRatio = 0.52;
-    if (strcmp(difficulty, "medium") == 0) keepRatio = 0.42;
-    else if (strcmp(difficulty, "hard") == 0) keepRatio = 0.22;
-    else if (strcmp(difficulty, "expert") == 0 || strcmp(difficulty, "master") == 0) keepRatio = 0.0;
+    double keepRatio = 0.0;
+    if (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) keepRatio = 0.65;
+    else if (strcmp(difficulty, "Medium") == 0 || strcmp(difficulty, "medium") == 0) keepRatio = 0.58;
+    else keepRatio = 0.0; // Hard and Master will minimize to the limit
 
     int totalCells = rows * cols;
     int targetKeepCount = (int)(totalCells * keepRatio);
@@ -3562,8 +3628,15 @@ void generate_puzzle_wasm(const char* difficulty) {
         int valA = clues[i];
         int valB = clues[symIdx];
         
-        if (strcmp(difficulty, "master") == 0) {
-            pairs[pairCount].priority = 0; // Pure random, no bias
+        if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "Hard") == 0) {
+            pairs[pairCount].priority = 0; // Pure random, no bias by default
+            if (valA == 0 || valB == 0) {
+                // To reduce 0s by about half in Hard/Master without eliminating them completely,
+                // we assign high removal priority (-1) to ~60% of the 0-pairs.
+                if ((rand() % 100) < 60) {
+                    pairs[pairCount].priority = -1;
+                }
+            }
         } else {
             if (valA == 3 || valB == 3) {
                 pairs[pairCount].priority = 2; // Keep 3 (check last)
@@ -3600,8 +3673,12 @@ void generate_puzzle_wasm(const char* difficulty) {
         if (clues[i] != -1) currentClueCount++;
     }
 
-    solvabilityChecks = 0;
     fastPathCount = 0;
+    solvabilityChecks = 0;
+    lookaheadEdgeTests = 0;
+    staticRuleEdgesTotal = 0;
+    lutEdgesTotal = 0;
+    
     printf("[C Generator] Starting symmetric minimization. Total cells: %d, Initial clues: %d, Target: %d\n", 
            totalCells, currentClueCount, targetKeepCount);
     
@@ -3609,41 +3686,9 @@ void generate_puzzle_wasm(const char* difficulty) {
     initSolvable = checkSolvability(difficulty);
     printf("Initial Board Solvability check: %d\n", initSolvable);
 
-    // Pass 1: Prioritize removing specific clues based on difficulty
-    if (strcmp(difficulty, "hard") == 0 || strcmp(difficulty, "expert") == 0) {
-        for (int i = 0; i < pairCount; i++) {
-            if (currentClueCount <= targetKeepCount) break;
-            int cellA = pairs[i].cellA;
-            int cellB = pairs[i].cellB;
-            int8_t valA = clues[cellA];
-            int8_t valB = clues[cellB];
-            if (valA == -1 && valB == -1) continue;
-            
-            if (strcmp(difficulty, "hard") == 0) {
-                // Hard: prioritize '0'
-                if (valA != 0 && valB != 0) continue;
-            } else {
-                // Expert: prioritize '0' and '3' to reduce their frequency
-                bool has0or3 = (valA == 0 || valA == 3 || valB == 0 || valB == 3);
-                if (!has0or3) continue;
-            }
-            
-            clues[cellA] = -1;
-            clues[cellB] = -1;
-            int removed = (cellA == cellB) ? 1 : 2;
-            currentClueCount -= removed;
-            if (!checkSolvability(difficulty)) {
-                clues[cellA] = valA;
-                clues[cellB] = valB;
-                currentClueCount += removed;
-            } else {
-                pairs[i].cellA = -1; // Mark as processed
-            }
-        }
-    }
 
     // Pass 2: General removal (Batched)
-    int batchSize = 12;
+    int batchSize = 16;
     int i = 0;
     while (i < pairCount && currentClueCount > targetKeepCount) {
         int actualBatch = 0;
@@ -3664,7 +3709,7 @@ void generate_puzzle_wasm(const char* difficulty) {
             
             if (valA == -1 && valB == -1) continue;
 
-            if (strcmp(difficulty, "easy") == 0 && (valA == 3 || valB == 3) && ((double)rand() / RAND_MAX) < 0.8) {
+            if ((strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) && (valA == 3 || valB == 3) && ((double)rand() / RAND_MAX) < 0.8) {
                 continue;
             }
 
@@ -3700,7 +3745,7 @@ void generate_puzzle_wasm(const char* difficulty) {
             currentClueCount += batchRemovedClues;
             
             if (batchSize > 1) {
-                batchSize = 1; // Permanently drop batch size to 1, loop will naturally retry with batchSize=1
+                batchSize /= 2; // Progressively halve the batch size
             } else {
                 // If batchSize is already 1, we just tried removing 1 pair and it failed. Skip this pair.
                 i++;
@@ -3708,8 +3753,8 @@ void generate_puzzle_wasm(const char* difficulty) {
         }
 
         if ((i) % 10 == 0 || batchSize > 1) {
-            printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d | BatchSize: %d\n",
-                   i, pairCount, currentClueCount, fastPathCount, debugTimeoutCount, batchSize);
+            printf("[C Generator] Progress: Checked %d/%d pairs | Clues remaining: %d | FastPath: %d | Timeouts: %d | BatchSize: %d | LookaheadTests: %d\n",
+                   i, pairCount, currentClueCount, fastPathCount, debugTimeoutCount, batchSize, lookaheadEdgeTests);
 #ifdef __EMSCRIPTEN__
             EM_ASM({
                 if (typeof self !== 'undefined' && typeof self.reportProgress === 'function') {
@@ -3720,8 +3765,8 @@ void generate_puzzle_wasm(const char* difficulty) {
         }
     }
 
-    printf("[C Generator] Finished symmetric minimization! Final clues remaining: %d/%d (%d%%) | FastPath: %d/%d checks\n", 
-           currentClueCount, totalCells, (currentClueCount * 100) / totalCells, fastPathCount, solvabilityChecks);
+    printf("[C Generator] Finished symmetric minimization! Final clues remaining: %d/%d (%d%%) | FastPath: %d/%d checks | LookaheadTests: %d | ForcedEdges: %d | StaticEdges: %d | LUTEdges: %d\n", 
+           currentClueCount, totalCells, (currentClueCount * 100) / totalCells, fastPathCount, solvabilityChecks, lookaheadEdgeTests, lookaheadForcedEdgesTotal, staticRuleEdgesTotal, lutEdgesTotal);
 
 #ifdef __EMSCRIPTEN__
     EM_ASM({
