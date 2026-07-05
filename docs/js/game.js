@@ -112,6 +112,11 @@ class LoopCourseGame {
     document.getElementById('btn-hint').addEventListener('click', () => this.giveHint());
     document.getElementById('btn-reset').addEventListener('click', () => this.resetBoard());
 
+    const applyRulesBtn = document.getElementById('btn-apply-rules');
+    if (applyRulesBtn) {
+      applyRulesBtn.addEventListener('click', () => this.applyRulesFromCurrentState());
+    }
+
     // Keybinds (Z for Undo, Y for Redo)
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'z') {
@@ -723,6 +728,134 @@ class LoopCourseGame {
       this.renderBoard();
     } catch (err) {
       console.error("Failed to run WASM deduction:", err);
+    }
+  }
+
+  applyRulesFromCurrentState() {
+    if (this.gameCompleted) return;
+    if (!window.wasmModule || typeof window.wasmModule._init_grid !== 'function' || typeof window.wasmModule._deduct !== 'function') {
+      console.warn("WASM module not fully loaded.");
+      return;
+    }
+
+    try {
+      window.wasmModule._init_grid(this.rows, this.cols);
+
+      // Copy current clues
+      const cluesPtr = window.wasmModule._get_clues_ptr();
+      const wasmCluesData = window.wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + this.rows * this.cols);
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          wasmCluesData[r * this.cols + c] = this.clues[r][c] === null ? -1 : this.clues[r][c];
+        }
+      }
+
+      const edgesPtr = window.wasmModule._get_edge_states_ptr();
+      const numH = (this.rows + 1) * this.cols;
+      const numV = this.rows * (this.cols + 1);
+      const numEdges = numH + numV;
+      const wasmEdgeData = window.wasmModule.HEAP8.subarray(edgesPtr, edgesPtr + numEdges);
+      
+      // Helper function to load current user edges into WASM
+      const loadEdgesToWasm = () => {
+        for (let i = 0; i < numEdges; i++) {
+          wasmEdgeData[i] = this.edgeStates[i];
+        }
+      };
+
+      // --- STEP 1: Apply Static Rules (All at once) ---
+      loadEdgesToWasm();
+      window.wasmModule._applyStaticRules();
+      
+      let staticChanges = [];
+      for (let i = 0; i < numEdges; i++) {
+        const oldState = this.edgeStates[i];
+        const newState = wasmEdgeData[i];
+        if (oldState === 0 && newState !== 0) {
+          staticChanges.push({ edgeIdx: i, oldState: 0, newState: newState });
+        }
+      }
+
+      if (staticChanges.length > 0) {
+        this.applyRulesBatch(staticChanges, `✨ 定石ルールで ${staticChanges.length} 箇所を一括確定しました！`);
+        return;
+      }
+
+      // --- STEP 2: Apply AC-3 (Exactly 1 move) ---
+      loadEdgesToWasm();
+      window.wasmModule._deduct(); // Full AC-3 constraint propagation
+      
+      if (typeof window.wasmModule._get_first_deduced_edge === 'function') {
+        const firstEdgeIdx = window.wasmModule._get_first_deduced_edge();
+        if (firstEdgeIdx !== -1) {
+          const newState = wasmEdgeData[firstEdgeIdx];
+          const singleChange = [{ edgeIdx: firstEdgeIdx, oldState: 0, newState: newState }];
+          
+          let ruleName = "不明";
+          if (typeof window.wasmModule._get_first_deduced_rule_name === 'function' && typeof window.wasmModule.UTF8ToString === 'function') {
+            const ptr = window.wasmModule._get_first_deduced_rule_name();
+            if (ptr) {
+                ruleName = window.wasmModule.UTF8ToString(ptr);
+            }
+          }
+
+          // Count total changes found for the message
+          let totalFound = 0;
+          for (let i = 0; i < numEdges; i++) {
+            if (this.edgeStates[i] === 0 && wasmEdgeData[i] !== 0) totalFound++;
+          }
+          
+          this.applyRulesBatch(singleChange, `💡 1手確定: [${ruleName}] (残り候補: ${totalFound - 1})`);
+          return;
+        }
+      } else {
+        // Fallback if WASM is not updated
+        let ac3Changes = [];
+        for (let i = 0; i < numEdges; i++) {
+          const oldState = this.edgeStates[i];
+          const newState = wasmEdgeData[i];
+          if (oldState === 0 && newState !== 0) {
+            ac3Changes.push({ edgeIdx: i, oldState: 0, newState: newState });
+          }
+        }
+  
+        if (ac3Changes.length > 0) {
+          const singleChange = [ac3Changes[0]];
+          this.applyRulesBatch(singleChange, `💡 AC-3 (制約伝播) で 1 箇所だけ確定しました！ (残り候補: ${ac3Changes.length - 1})`);
+          return;
+        }
+      }
+
+      this.statusTextEl.textContent = `現在の盤面から自動確定できる箇所はありませんでした。`;
+      console.log("No new rules could be applied from current state.");
+    } catch (err) {
+      console.error("Failed to apply rules:", err);
+    }
+  }
+
+  applyRulesBatch(changes, statusMessage) {
+    for (const change of changes) {
+      this.edgeStates[change.edgeIdx] = change.newState;
+      this.updateEdgeUI(change.edgeIdx);
+    }
+
+    this.undoStack.push(changes);
+    this.redoStack = [];
+    this.updateUndoRedoButtons();
+    this.updateCluesHighlight();
+    this.scheduleAutoColoring();
+    this.checkWinCondition();
+    
+    this.statusTextEl.textContent = statusMessage;
+    
+    for (const change of changes) {
+      const edgeGroup = this.edgeElements ? this.edgeElements[change.edgeIdx] : null;
+      if (edgeGroup) {
+        edgeGroup.classList.add('hint-pulse');
+        setTimeout(() => {
+          edgeGroup.classList.remove('hint-pulse');
+        }, 1600);
+      }
     }
   }
 

@@ -251,6 +251,27 @@ int8_t* get_clues_ptr() {
     return clues;
 }
 
+int deduction_history[MAX_EDGES * 2];
+const char* deduction_rule_names[MAX_EDGES * 2];
+int deduction_history_count = 0;
+const char* current_rule_name = "未分類";
+
+EMSCRIPTEN_KEEPALIVE
+int get_first_deduced_edge() {
+    if (deduction_history_count > 0) {
+        return deduction_history[0];
+    }
+    return -1;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* get_first_deduced_rule_name() {
+    if (deduction_history_count > 0) {
+        return deduction_rule_names[0];
+    }
+    return "不明";
+}
+
 EMSCRIPTEN_KEEPALIVE
 void set_random_seed(unsigned int seed) {
     srand(seed);
@@ -301,7 +322,14 @@ static inline bool setEdgeState(int edgeIdx, int8_t state) {
     if (edgeStates[edgeIdx] == state) return true; // Already set to this state
     if (edgeStates[edgeIdx] != 0) return false;    // Contradiction: edge is already determined to a different state
     
-    // Lookahead limit check
+    edgeStates[edgeIdx] = state;
+    
+    if (deduction_history_count < MAX_EDGES * 2) {
+        deduction_rule_names[deduction_history_count] = current_rule_name;
+        deduction_history[deduction_history_count++] = edgeIdx;
+    }
+
+    gf2_update_queue[gf2_queue_tail++] = edgeIdx;
     if (isDoingLookahead && lookaheadMaxLimit > 0 && lookaheadConfirmedCount >= lookaheadMaxLimit) {
         return true; // Limit reached: treat as success (no contradiction yet)
     }
@@ -752,6 +780,15 @@ bool applyStaticRules() {
     clearStacks();
     
     initGlobalGF2();
+    
+    // Sync pre-existing edges into the GF2 update queue.
+    // This ensures that lines drawn by the user (or previous states) are processed by GF2 during AC-3.
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] != 0) {
+            gf2_update_queue[gf2_queue_tail++] = i;
+        }
+    }
+
     dbgSource = "static_rules";
 
     for (int r = 0; r < rows; r++) {
@@ -761,6 +798,7 @@ bool applyStaticRules() {
             
             // Rule 1: Clue 0 (All edges are crosses)
             if (clue == 0) {
+                current_rule_name = "定石: 数字0の周囲は×";
                 if (!setEdgeState(getHEdgeIndex(r, c), -1)) return false;
                 if (!setEdgeState(getVEdgeIndex(r, c), -1)) return false;
                 if (!setEdgeState(getHEdgeIndex(r + 1, c), -1)) return false;
@@ -770,6 +808,7 @@ bool applyStaticRules() {
             
             // Rule 2.1: Orthogonally Adjacent 3-3 Cells
             if (clue == 3) {
+                current_rule_name = "定石: 3が縦横に隣接";
                 if (c + 1 < cols && clues[r * cols + (c + 1)] == 3) {
                     int shared = getVEdgeIndex(r, c + 1);
                     int outerL = getVEdgeIndex(r, c);
@@ -844,6 +883,7 @@ bool applyStaticRules() {
             
             // Rule 2.1c: Clue 3 surrounded by two 1s forming a corner
             if (clue == 3) {
+                current_rule_name = "定石: 1に角で挟まれた3";
                 // Top-Right Corner (1 at Top, 1 at Right)
                 if (r - 1 >= 0 && c + 1 < cols && clues[(r - 1) * cols + c] == 1 && clues[r * cols + c + 1] == 1) {
                     if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false; // Top of Top 1
@@ -1201,6 +1241,7 @@ bool applyStaticRules() {
 
     extern bool restrictLogicToLocal;
     if (!restrictLogicToLocal) {
+        current_rule_name = "定石: パターン辞書(LUT)の一致";
         if (!applyLUT()) return false;
         
         int afterLUT = 0;
@@ -1698,8 +1739,11 @@ static inline bool deductIncremental() {
                 int c = cellIdx % cols;
                 int clue = clues[cellIdx];
                 if (clue != -1) {
+                    current_rule_name = "角制約: 2や3の角の処理";
                     if (!check23CornerLogic(r, c)) return false;
                     if (!check22CornerLogic(r, c)) return false;
+                    
+                    current_rule_name = "セル制約: 数字と線の数が合わない";
                     int cellEdges[4];
                     getCellEdges(r, c, cellEdges);
                     int lines = 0;
@@ -1735,6 +1779,7 @@ static inline bool deductIncremental() {
                     }
                     
                     if (clue == 3) {
+                        current_rule_name = "角制約: 3の角から伸びる線";
                         int eT = cellEdges[0];
                         int eR = cellEdges[1];
                         int eB = cellEdges[2];
@@ -1826,56 +1871,6 @@ static inline bool deductIncremental() {
                             if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; // Up-Right
                             if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; // Down-Left
                         }
-                        
-                        // int status;
-                        // // Down-Right dot is eB, eR. Opposite is eT, eL.
-                        // status = checkDiagonalChain(r, c, 1, 1);
-                        // if (status & 1) {
-                        //     if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                        //     if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                        // }
-                        // if (status & 2) {
-                        //     if (edgeStates[eB] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                        //     if (edgeStates[eR] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                        //     if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
-                        //     if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
-                        // }
-                        // // Down-Left dot is eB, eL. Opposite is eT, eR.
-                        // status = checkDiagonalChain(r, c, 1, -1);
-                        // if (status & 1) {
-                        //     if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                        //     if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                        // }
-                        // if (status & 2) {
-                        //     if (edgeStates[eB] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                        //     if (edgeStates[eL] == 1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                        //     if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
-                        //     if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, -1)) return false; }
-                        // }
-                        // // Up-Right dot is eT, eR. Opposite is eB, eL.
-                        // status = checkDiagonalChain(r, c, -1, 1);
-                        // if (status & 1) {
-                        //     if (edgeStates[eB] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                        //     if (edgeStates[eL] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                        // }
-                        // if (status & 2) {
-                        //     if (edgeStates[eT] == 1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                        //     if (edgeStates[eR] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                        //     if (edgeStates[eT] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, -1)) return false; }
-                        //     if (edgeStates[eR] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
-                        // }
-                        // // Up-Left dot is eT, eL. Opposite is eB, eR.
-                        // status = checkDiagonalChain(r, c, -1, -1);
-                        // if (status & 1) {
-                        //     if (edgeStates[eB] == -1 && edgeStates[eR] == 0) { if (!setEdgeState(eR, 1)) return false; }
-                        //     if (edgeStates[eR] == -1 && edgeStates[eB] == 0) { if (!setEdgeState(eB, 1)) return false; }
-                        // }
-                        // if (status & 2) {
-                        //     if (edgeStates[eT] == 1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, 1)) return false; }
-                        //     if (edgeStates[eL] == 1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, 1)) return false; }
-                        //     if (edgeStates[eT] == -1 && edgeStates[eL] == 0) { if (!setEdgeState(eL, -1)) return false; }
-                        //     if (edgeStates[eL] == -1 && edgeStates[eT] == 0) { if (!setEdgeState(eT, -1)) return false; }
-                        // }
                     }
                     
                     // Universal SLE Propagation
@@ -1970,6 +1965,7 @@ static inline bool deductIncremental() {
             // 2. Process dots
             int dotIdx = popDot();
             if (dotIdx != -1) {
+                current_rule_name = "交点制約: 線は交差・分岐しない";
                 dbgSource = "dot";
                 dbgDot = dotIdx;
                 dbgCell = -1;
@@ -2091,6 +2087,7 @@ static inline bool deductIncremental() {
                     }
                 }
 
+                current_rule_name = "交点制約: 角の処理(1の斜め等)";
                 // 3. Advanced Rule: Line entering a 3 corner
                 int eL = getHEdgeIndex(r, c - 1);
                 int eR = getHEdgeIndex(r, c);
@@ -2244,6 +2241,7 @@ static inline bool deductIncremental() {
             
             // 3. Process GF(2)
             if (gf2_queue_head < gf2_queue_tail) {
+                current_rule_name = "全体制約: 連立方程式(GF2)の更新";
                 int e = gf2_update_queue[gf2_queue_head++];
                 int val = (edgeStates[e] == 1) ? 1 : 0;
                 if (!updateGlobalGF2(e, val)) return false;
@@ -2258,9 +2256,13 @@ static inline bool deductIncremental() {
         }
 
         // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
+        current_rule_name = "全体制約: 内外判定(Jordan Curve)";
         if (!deductJordanCurveParity()) return false;
+        
+        current_rule_name = "全体制約: 高度な2の制約";
         if (!applyAdvanced2Rules()) return false;
         
+        current_rule_name = "全体制約: 2の角のペア制約";
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 if (clues[r * cols + c] == 2) {
@@ -2280,6 +2282,7 @@ static inline bool deductIncremental() {
         }
         
         bool cycleChanged = false;
+        current_rule_name = "全体制約: ループの早期閉路禁止";
         for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
                 int dotA, dotB;
@@ -2310,6 +2313,7 @@ static inline bool deductIncremental() {
         if (cellStackTop == 0 && dotStackTop == 0 && !cycleChanged) {
             // Only when absolutely everything is exhausted, run the O(V+E) Bridge Detection
             if (enableAdvancedAC3) {
+                current_rule_name = "全体制約: 全体連結性(Bridge)";
                 if (!runUniversalParityCheck()) return false;
             }
             
@@ -2323,13 +2327,26 @@ static inline bool deductIncremental() {
 
 EMSCRIPTEN_KEEPALIVE
 bool deduct() {
+    deduction_history_count = 0;
     dsuInitFromCurrent();
     clearStacks();
     
-    // initial push is removed because applyStaticRules handles pushing changed elements automatically
-    
     if (!applyStaticRules()) {
         return false;
+    }
+    
+    // Push all cells and dots to stacks so that deductIncremental evaluates the entire board.
+    // This is necessary because JS writes directly to edgeStates without calling setEdgeState,
+    // and applyStaticRules() clears the stacks.
+    for (int r = 0; r <= rows; r++) {
+        for (int c = 0; c <= cols; c++) {
+            pushDot(r, c);
+        }
+    }
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            pushCell(r, c);
+        }
     }
     
     return deductIncremental();
@@ -2910,6 +2927,73 @@ int check_human_solvability() {
         } // closes for loop
     } // closes while (changed)
     return -2; // Stalled: Not solvable by 1-step lookahead human logic
+}
+
+EMSCRIPTEN_KEEPALIVE
+int apply_lookahead_once() {
+    dsuInitFromCurrent();
+    clearStacks();
+
+    // Basic static rule pass to populate the DSU and constraints.
+    if (!applyStaticRules()) return -1; 
+    if (!deductIncremental()) return -1;
+
+    int found = 0;
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] == 0) {
+            if (!isEdgeConstrained(i)) continue;
+            
+            // Assume Line (1)
+            int checkpoint = dsuHistoryCount;
+            int8_t backupEdges[MAX_EDGES];
+            memcpy(backupEdges, edgeStates, numEdges);
+            memcpy(check_gf2_matrix_backup, global_gf2_matrix, sizeof(global_gf2_matrix));
+            memcpy(check_gf2_constants_backup, global_gf2_constants, sizeof(global_gf2_constants));
+            memcpy(check_gf2_pivot_backup, global_gf2_pivot, sizeof(global_gf2_pivot));
+            
+            bool lineSuccess = setEdgeState(i, 1) && deductIncremental();
+            
+            dsuRollback(checkpoint);
+            memcpy(edgeStates, backupEdges, numEdges);
+            memcpy(global_gf2_matrix, check_gf2_matrix_backup, sizeof(global_gf2_matrix));
+            memcpy(global_gf2_constants, check_gf2_constants_backup, sizeof(global_gf2_constants));
+            memcpy(global_gf2_pivot, check_gf2_pivot_backup, sizeof(global_gf2_pivot));
+            gf2_queue_head = 0; gf2_queue_tail = 0;
+            clearStacks();
+            
+            if (!lineSuccess) {
+                if (!setEdgeState(i, -1)) return -1;
+                if (!deductIncremental()) return -1;
+                found++;
+                continue; // Move to next edge
+            }
+            
+            // Assume Cross (-1)
+            checkpoint = dsuHistoryCount;
+            memcpy(backupEdges, edgeStates, numEdges);
+            memcpy(check_gf2_matrix_backup, global_gf2_matrix, sizeof(global_gf2_matrix));
+            memcpy(check_gf2_constants_backup, global_gf2_constants, sizeof(global_gf2_constants));
+            memcpy(check_gf2_pivot_backup, global_gf2_pivot, sizeof(global_gf2_pivot));
+            
+            bool crossSuccess = setEdgeState(i, -1) && deductIncremental();
+            
+            dsuRollback(checkpoint);
+            memcpy(edgeStates, backupEdges, numEdges);
+            memcpy(global_gf2_matrix, check_gf2_matrix_backup, sizeof(global_gf2_matrix));
+            memcpy(global_gf2_constants, check_gf2_constants_backup, sizeof(global_gf2_constants));
+            memcpy(global_gf2_pivot, check_gf2_pivot_backup, sizeof(global_gf2_pivot));
+            gf2_queue_head = 0; gf2_queue_tail = 0;
+            clearStacks();
+            
+            if (!crossSuccess) {
+                if (!setEdgeState(i, 1)) return -1;
+                if (!deductIncremental()) return -1;
+                found++;
+            }
+        }
+    }
+    
+    return found;
 }
 
 EMSCRIPTEN_KEEPALIVE
