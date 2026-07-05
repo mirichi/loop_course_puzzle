@@ -3440,6 +3440,52 @@ static void calculateClues() {
     }
 }
 
+// Slitherlink Aesthetic Rule: Eliminate adjacent '0' clues
+static void eliminateAdjacentZerosSymmetrically() {
+    bool changed;
+    do {
+        changed = false;
+        int candidates[MAX_CELLS];
+        int candidateCount = 0;
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (clues[r * cols + c] != 0) continue;
+                bool hasAdj0 = false;
+                for (int dr = -1; dr <= 1; dr++) {
+                    for (int dc = -1; dc <= 1; dc++) {
+                        if (dr == 0 && dc == 0) continue;
+                        int nr = r + dr;
+                        int nc = c + dc;
+                        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                            if (clues[nr * cols + nc] == 0) {
+                                hasAdj0 = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (hasAdj0) break;
+                }
+                if (hasAdj0) {
+                    candidates[candidateCount++] = r * cols + c;
+                }
+            }
+        }
+
+        if (candidateCount > 0) {
+            int pickIdx = candidates[rand() % candidateCount];
+            int pickR = pickIdx / cols;
+            int pickC = pickIdx % cols;
+            int symR = rows - 1 - pickR;
+            int symC = cols - 1 - pickC;
+            
+            clues[pickR * cols + pickC] = -1;
+            clues[symR * cols + symC] = -1;
+            changed = true;
+        }
+    } while (changed);
+}
+
 static int debugTimeoutCount = 0;
 static int debugContradictionCount = 0;
 static int solvabilityChecks = 0;
@@ -3533,6 +3579,7 @@ void generate_puzzle_wasm(const char* difficulty) {
         generateRandomLoop();
         clock_t tLoop = clock();
         calculateClues();
+        eliminateAdjacentZerosSymmetrically();
         clock_t tClues = clock();
         
         // Calculate penalties
@@ -3610,13 +3657,6 @@ void generate_puzzle_wasm(const char* difficulty) {
         
         if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "Hard") == 0) {
             pairs[pairCount].priority = 0; // Pure random, no bias by default
-            if (valA == 0 || valB == 0) {
-                // To reduce 0s by about half in Hard/Master without eliminating them completely,
-                // we assign high removal priority (-1) to ~60% of the 0-pairs.
-                if ((rand() % 100) < 60) {
-                    pairs[pairCount].priority = -1;
-                }
-            }
         } else {
             if (valA == 3 || valB == 3) {
                 pairs[pairCount].priority = 2; // Keep 3 (check last)
