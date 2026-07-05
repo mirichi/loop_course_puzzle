@@ -15,7 +15,7 @@ let wasmSetRandomSeed = null;
 
 // Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
 if (typeof createLoopCourseModule === 'function') {
-  const wasmVersion = "20260624_v43";
+  const wasmVersion = "20260624_v47";
   createLoopCourseModule({
     locateFile: function(path, prefix) {
       if (path.endsWith('.wasm')) {
@@ -36,6 +36,7 @@ if (typeof createLoopCourseModule === 'function') {
     console.log("LoopCourse WASM module loaded successfully with cache-buster!");
     if (typeof window !== 'undefined') {
       window.wasmReady = true;
+      window.wasmModule = Module;
       const statusTextEl = document.getElementById('status-text');
       if (statusTextEl && statusTextEl.textContent.includes('準備完了')) {
         statusTextEl.textContent = '準備完了（WASM高速エンジン稼働中）！すべての数字を満たす1つのループを作ろう。';

@@ -52,8 +52,16 @@ class LoopCourseGame {
     this.undoBtn = document.getElementById('btn-undo');
     this.redoBtn = document.getElementById('btn-redo');
 
+    this.coloringTimeout = null;
+
     // Setup event listeners for settings
     document.getElementById('btn-new-game').addEventListener('click', () => this.startNewGame());
+    const loadFileBtn = document.getElementById('btn-load-file');
+    const fileInput = document.getElementById('file-input');
+    if (loadFileBtn && fileInput) {
+      loadFileBtn.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', (e) => this.handleFileUpload(e));
+    }
 
     // Disable browser context menu on the entire board to allow smooth right-click tool usage
     this.svg.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -98,7 +106,7 @@ class LoopCourseGame {
         } else {
           autoColorBtn.classList.remove('active');
         }
-        this.computeAutoColoring();
+        this.scheduleAutoColoring();
       });
     }
     document.getElementById('btn-hint').addEventListener('click', () => this.giveHint());
@@ -279,13 +287,13 @@ class LoopCourseGame {
         touchMode = 'pinch';
         touchDrawActive = false;
         this.currentDragGroup = []; // Cancel any active drawing
-        
+
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         lastTouchDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         lastTouchMidX = (t1.clientX + t2.clientX) / 2;
         lastTouchMidY = (t1.clientY + t2.clientY) / 2;
-        
+
         e.preventDefault();
       } else if (e.touches.length === 1) {
         const touch = e.touches[0];
@@ -480,7 +488,7 @@ class LoopCourseGame {
     if (!this.svgContainer) return;
     let containerW = this.svgContainer.clientWidth;
     let containerH = this.svgContainer.clientHeight;
-    
+
     if (!containerW || !containerH) {
       const rect = this.svgContainer.getBoundingClientRect();
       containerW = rect.width;
@@ -505,19 +513,21 @@ class LoopCourseGame {
   }
 
   updateSVGTransform() {
-    this.clampPanCoordinates();
-    const baseW = this.cols * this.spacing + this.padding * 2;
-    const baseH = this.rows * this.spacing + this.padding * 2;
-    this.svg.style.width = `${baseW * this.zoomScale}px`;
-    this.svg.style.height = `${baseH * this.zoomScale}px`;
-    this.svg.style.transform = `translate(${this.panX}px, ${this.panY}px)`;
+    // Hardware accelerated transform instead of triggering expensive layout reflows with width/height updates
+    if (this.transformRaf) return;
+    this.transformRaf = requestAnimationFrame(() => {
+      this.clampPanCoordinates();
+      this.svg.style.transformOrigin = "0 0";
+      this.svg.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoomScale})`;
+      this.transformRaf = null;
+    });
   }
 
   fitBoardToContainer() {
     if (!this.svgContainer) return;
     let containerW = this.svgContainer.clientWidth;
     let containerH = this.svgContainer.clientHeight;
-    
+
     // Fallbacks if clientWidth/clientHeight are not ready (e.g. initial render)
     if (!containerW || !containerH) {
       const rect = this.svgContainer.getBoundingClientRect();
@@ -539,7 +549,7 @@ class LoopCourseGame {
     // Initial zoom fits the container completely by clamping only to this.minZoom.
     // Allow scaling up to 4.0 for nice large display on wide screens.
     this.zoomScale = Math.max(this.minZoom, Math.min(scale, 4.0));
-    
+
     this.panX = (containerW - svgW * this.zoomScale) / 2;
     this.panY = (containerH - svgH * this.zoomScale) / 2;
 
@@ -547,6 +557,173 @@ class LoopCourseGame {
     this.lastContainerH = containerH;
 
     this.updateSVGTransform();
+  }
+
+  async handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+      if (lines.length < 3) throw new Error("無効なフォーマットです。");
+
+      const rows = parseInt(lines[0], 10);
+      const cols = parseInt(lines[1], 10);
+
+      const clues = [];
+      for (let r = 0; r < rows; r++) {
+        const rowClues = [];
+        // Remove spaces so that '3 . 2' becomes '3.2'
+        const rowStr = lines[2 + r] ? lines[2 + r].replace(/\s+/g, '') : "";
+        if (rowStr.length < cols) throw new Error("行のデータが不足しています。");
+        for (let c = 0; c < cols; c++) {
+          const char = rowStr[c];
+          if (char === '.') {
+            rowClues.push(null);
+          } else {
+            rowClues.push(parseInt(char, 10));
+          }
+        }
+        clues.push(rowClues);
+      }
+
+      this.statusTextEl.textContent = 'カスタム盤面の正解を計算中... ⚡';
+      this.statusTextEl.classList.add('loading');
+
+      // Let UI update
+      setTimeout(() => {
+        let solution = null;
+        const numEdges = (rows + 1) * cols + rows * (cols + 1);
+
+        if (window.wasmModule && typeof window.wasmModule._solve_puzzle_wasm === 'function') {
+          window.wasmModule._init_grid(rows, cols);
+          const cluesPtr = window.wasmModule._get_clues_ptr();
+          const wasmCluesData = window.wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + rows * cols);
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              wasmCluesData[r * cols + c] = clues[r][c] === null ? -1 : clues[r][c];
+            }
+          }
+
+          const foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000); // 5M steps for safety
+          if (foundCount > 0) {
+            const solPtr = window.wasmModule._get_solution_ptr(0);
+            solution = new Int8Array(window.wasmModule.HEAP8.subarray(solPtr, solPtr + numEdges));
+          }
+        } else {
+          // Fallback to JS solver if WASM is somehow not available
+          const solver = new window.LoopCourseSolver(rows, cols, clues);
+          const solutions = solver.solve(true, 100000);
+          if (solutions && solutions.length > 0) {
+            solution = solutions[0];
+          }
+        }
+
+        if (!solution) {
+          // If unresolvable or takes too long, provide a blank solution (hint won't work well)
+          solution = new Int8Array(numEdges);
+          console.warn("Could not find a solution for the loaded puzzle.");
+        }
+
+        this.loadCustomGame(rows, cols, clues, solution);
+
+        // Reset input to allow loading the same file again
+        e.target.value = '';
+      }, 50);
+
+    } catch (err) {
+      alert("ファイルの読み込みに失敗しました: " + err.message);
+      e.target.value = '';
+    }
+  }
+
+  loadCustomGame(rows, cols, clues, solution) {
+    this.gameCompleted = false;
+    this.resetHintFailedState();
+    this.hasManuallyAdjusted = false;
+    document.getElementById('victory-modal').classList.remove('active');
+
+    if (this.generatorWorker) {
+      this.generatorWorker.terminate();
+      this.generatorWorker = null;
+    }
+    if (this.workerTimeoutTimer) {
+      clearTimeout(this.workerTimeoutTimer);
+      this.workerTimeoutTimer = null;
+    }
+
+    this.rows = rows;
+    this.cols = cols;
+    this.clues = clues;
+    this.solution = solution;
+    this.difficulty = "Custom";
+
+    this.numH = (this.rows + 1) * this.cols;
+    this.numV = this.rows * (this.cols + 1);
+    this.numEdges = this.numH + this.numV;
+
+    this.edgeStates = new Int8Array(this.numEdges);
+    this.cellStates = new Int8Array(this.rows * this.cols);
+    this.undoStack = [];
+    this.redoStack = [];
+    this.currentDragGroup = [];
+
+    this.updateUndoRedoButtons();
+    this.renderBoard();
+    this.startTimer();
+    this.scheduleAutoColoring();
+
+    this.statusTextEl.innerHTML = 'ファイルからパズルを読み込みました！';
+    this.statusTextEl.classList.remove('loading');
+
+    // Automatically apply 3x3 LUT deductions from WASM solver
+    // this.applyWasmDeduction(rows, cols, clues); // Disabled per user request, but kept for future reference
+  }
+
+  applyWasmDeduction(rows, cols, clues) {
+    if (!window.wasmModule || typeof window.wasmModule._init_grid !== 'function' || typeof window.wasmModule._applyStaticRules !== 'function') {
+      console.warn("WASM module or _applyStaticRules not fully loaded, cannot apply static rules.");
+      return;
+    }
+
+    try {
+      window.wasmModule._init_grid(rows, cols);
+
+      const cluesPtr = window.wasmModule._get_clues_ptr();
+      const wasmCluesData = window.wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + rows * cols);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          wasmCluesData[r * cols + c] = clues[r][c] === null ? -1 : clues[r][c];
+        }
+      }
+
+      const edgesPtr = window.wasmModule._get_edge_states_ptr();
+      const numH = (rows + 1) * cols;
+      const numV = rows * (cols + 1);
+      const numEdges = numH + numV;
+      const wasmEdgeData = window.wasmModule.HEAP8.subarray(edgesPtr, edgesPtr + numEdges);
+      for (let i = 0; i < numEdges; i++) {
+        wasmEdgeData[i] = 0;
+      }
+
+      // Use _applyStaticRules directly
+      const success = window.wasmModule._applyStaticRules();
+      console.log("WASM applyStaticRules executed. Success:", success);
+
+      let appliedCount = 0;
+      for (let i = 0; i < numEdges; i++) {
+        if (wasmEdgeData[i] !== 0) {
+          this.edgeStates[i] = wasmEdgeData[i];
+          appliedCount++;
+        }
+      }
+      console.log(`Applied ${appliedCount} deduced edges from 3x3 LUT & global rules.`);
+
+      this.scheduleAutoColoring();
+      this.renderBoard();
+    } catch (err) {
+      console.error("Failed to run WASM deduction:", err);
+    }
   }
 
   startNewGame() {
@@ -643,7 +820,7 @@ class LoopCourseGame {
         this.updateUndoRedoButtons();
         this.renderBoard();
         this.startTimer();
-        this.computeAutoColoring();
+        this.scheduleAutoColoring();
 
         if (data.engineUsed === "WASM") {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
@@ -701,7 +878,7 @@ class LoopCourseGame {
         this.updateUndoRedoButtons();
         this.renderBoard();
         this.startTimer();
-        this.computeAutoColoring();
+        this.scheduleAutoColoring();
 
         if (puzzle.engineUsed === "WASM") {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator wasm-engine">WASM高速エンジン ⚡</span>で生成完了）！すべての数字を満たす1つのループを作ろう。';
@@ -722,10 +899,15 @@ class LoopCourseGame {
 
     // Cache cell and edge elements to avoid slow DOM queries during drag operations
     this.cellElements = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
+    this.cellBackgrounds = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
     this.edgeElements = new Array(this.numEdges).fill(null);
 
     const svgWidth = this.cols * this.spacing + this.padding * 2;
     const svgHeight = this.rows * this.spacing + this.padding * 2;
+    
+    // Set base SVG size, scaling is handled purely by CSS transform for performance
+    this.svg.style.width = `${svgWidth}px`;
+    this.svg.style.height = `${svgHeight}px`;
     this.svg.setAttribute('width', svgWidth);
     this.svg.setAttribute('height', svgHeight);
     this.svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
@@ -765,8 +947,9 @@ class LoopCourseGame {
 
         this.svg.appendChild(cellGroup);
 
-        // Store cellGroup in cache
+        // Store cellGroup and bg in cache
         this.cellElements[r][c] = cellGroup;
+        this.cellBackgrounds[r][c] = bg;
       }
     }
 
@@ -885,16 +1068,10 @@ class LoopCourseGame {
 
     const state = this.edgeStates[edgeIdx];
 
-    // Clear old state classes
-    edgeGroup.classList.remove('state-line', 'state-cross', 'state-empty');
-
-    if (state === 1) {
-      edgeGroup.classList.add('state-line');
-    } else if (state === -1) {
-      edgeGroup.classList.add('state-cross');
-    } else {
-      edgeGroup.classList.add('state-empty');
-    }
+    // Toggle classes only if necessary (faster than remove/add)
+    edgeGroup.classList.toggle('state-line', state === 1);
+    edgeGroup.classList.toggle('state-cross', state === -1);
+    edgeGroup.classList.toggle('state-empty', state === 0);
   }
 
   updateSingleClueHighlight(r, c) {
@@ -909,13 +1086,11 @@ class LoopCourseGame {
     const linesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === 1 ? 1 : 0), 0);
     const crossesCount = cellEdges.reduce((sum, idx) => sum + (this.edgeStates[idx] === -1 ? 1 : 0), 0);
 
-    cellGroup.classList.remove('clue-satisfied', 'clue-error');
+    const isSatisfied = linesCount === clue;
+    const isError = !isSatisfied && (linesCount > clue || crossesCount > (4 - clue));
 
-    if (linesCount === clue) {
-      cellGroup.classList.add('clue-satisfied');
-    } else if (linesCount > clue || crossesCount > (4 - clue)) {
-      cellGroup.classList.add('clue-error');
-    }
+    cellGroup.classList.toggle('clue-satisfied', isSatisfied);
+    cellGroup.classList.toggle('clue-error', isError);
   }
 
   updateCluesHighlight() {
@@ -924,6 +1099,16 @@ class LoopCourseGame {
         this.updateSingleClueHighlight(r, c);
       }
     }
+  }
+
+  scheduleAutoColoring() {
+    if (this.coloringTimeout !== null) {
+      cancelAnimationFrame(this.coloringTimeout);
+    }
+    this.coloringTimeout = requestAnimationFrame(() => {
+      this.computeAutoColoring();
+      this.coloringTimeout = null;
+    });
   }
 
   computeAutoColoring() {
@@ -1051,16 +1236,14 @@ class LoopCourseGame {
   }
 
   updateCellUI(r, c) {
-    const cellGroup = this.cellElements ? this.cellElements[r][c] : this.svg.querySelector(`.cell-${r}-${c}`);
+    const cellGroup = this.cellElements ? this.cellElements[r][c] : null;
     if (!cellGroup) return;
     const state = this.cellStates[r * this.cols + c];
+    const isInside = state === 1;
+    const isOutside = state === 2;
 
-    cellGroup.classList.remove('bg-color-a', 'bg-color-b');
-    if (state === 1) {
-      cellGroup.classList.add('bg-color-a');
-    } else if (state === 2) {
-      cellGroup.classList.add('bg-color-b');
-    }
+    cellGroup.classList.toggle('bg-color-a', isInside);
+    cellGroup.classList.toggle('bg-color-b', isOutside);
   }
 
   handleEdgeMouseDown(e, edgeIdx) {
@@ -1275,7 +1458,7 @@ class LoopCourseGame {
         if (hTop !== -1) candidateEdges.add(hTop);
         const hBot = this.getHEdgeIndex(r + 1, c);
         if (hBot !== -1) candidateEdges.add(hBot);
-        
+
         // Vertical left/right
         const vLeft = this.getVEdgeIndex(r, c);
         if (vLeft !== -1) candidateEdges.add(vLeft);
@@ -1445,7 +1628,7 @@ class LoopCourseGame {
     for (const cell of adjCells) {
       this.updateSingleClueHighlight(cell.r, cell.c);
     }
-    this.computeAutoColoring();
+    this.scheduleAutoColoring();
   }
 
   undo() {
@@ -1471,7 +1654,7 @@ class LoopCourseGame {
     this.redoStack.push(redoGroup.reverse());
     this.updateUndoRedoButtons();
     this.updateCluesHighlight();
-    this.computeAutoColoring();
+    this.scheduleAutoColoring();
   }
 
   redo() {
@@ -1495,7 +1678,7 @@ class LoopCourseGame {
     this.undoStack.push(undoGroup);
     this.updateUndoRedoButtons();
     this.updateCluesHighlight();
-    this.computeAutoColoring();
+    this.scheduleAutoColoring();
   }
 
   resetBoard() {
@@ -1586,7 +1769,7 @@ class LoopCourseGame {
           changes.push({ edgeIdx: change.edgeIdx, oldState, newState: change.state });
         }
         this.updateCluesHighlight();
-        this.computeAutoColoring();
+        this.scheduleAutoColoring();
 
         // Push all changes to Undo stack as a single change step
         this.undoStack.push(changes);
@@ -1614,7 +1797,7 @@ class LoopCourseGame {
         this.edgeStates[hintIdx] = newState;
         this.updateEdgeUI(hintIdx);
         this.updateCluesHighlight();
-        this.computeAutoColoring();
+        this.scheduleAutoColoring();
 
         // Push to Undo stack as a single change step
         this.undoStack.push([{ edgeIdx: hintIdx, oldState, newState }]);
@@ -1713,7 +1896,7 @@ class LoopCourseGame {
             this.edgeStates[foundIdx] = newState;
             this.updateEdgeUI(foundIdx);
             this.updateCluesHighlight();
-            this.computeAutoColoring();
+            this.scheduleAutoColoring();
 
             this.undoStack.push([{ edgeIdx: foundIdx, oldState, newState }]);
             this.redoStack = [];

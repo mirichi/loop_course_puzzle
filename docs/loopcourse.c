@@ -12,11 +12,11 @@
 #define EMSCRIPTEN_KEEPALIVE
 #endif
 
-#define MAX_ROWS 40
-#define MAX_COLS 40
-#define MAX_CELLS 1600
-#define MAX_EDGES 3300
-#define MAX_DOTS 1700
+#define MAX_ROWS 50
+#define MAX_COLS 50
+#define MAX_CELLS 2500
+#define MAX_EDGES 5500
+#define MAX_DOTS 2700
 
 // Grid parameters
 int rows = 0;
@@ -60,8 +60,8 @@ static int adjCount[MAX_DOTS];
 static bool visitedDots[MAX_DOTS];
 
 // GF(2) Area Parity Solver memory
-#define MAX_GF2_EQS 3500
-#define MAX_GF2_VARS 3500
+#define MAX_GF2_EQS 5500
+#define MAX_GF2_VARS 5500
 #define MAX_GF2_WORDS ((MAX_GF2_VARS + 63) / 64)
 
 static uint64_t global_gf2_matrix[MAX_GF2_EQS][MAX_GF2_WORDS];
@@ -746,7 +746,11 @@ static bool updateGlobalGF2(int e, int val) {
 
 #include "lut_module.h"
 
-static bool applyStaticRules() {
+EMSCRIPTEN_KEEPALIVE
+bool applyStaticRules() {
+    dsuInitFromCurrent();
+    clearStacks();
+    
     initGlobalGF2();
     dbgSource = "static_rules";
 
@@ -1195,12 +1199,15 @@ static bool applyStaticRules() {
     extern int staticRuleEdgesTotal;
     staticRuleEdgesTotal += afterStatic;
 
-    if (!applyLUT()) return false;
-    
-    int afterLUT = 0;
-    for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
-    extern int lutEdgesTotal;
-    lutEdgesTotal += (afterLUT - afterStatic);
+    extern bool restrictLogicToLocal;
+    if (!restrictLogicToLocal) {
+        if (!applyLUT()) return false;
+        
+        int afterLUT = 0;
+        for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
+        extern int lutEdgesTotal;
+        lutEdgesTotal += (afterLUT - afterStatic);
+    }
 
     return true;
 }
