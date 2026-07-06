@@ -783,6 +783,18 @@ class LoopCourseGame {
 
       // --- STEP 2: Apply AC-3 (Exactly 1 move) ---
       loadEdgesToWasm();
+      
+      // Set the solver difficulty to match the current puzzle difficulty
+      // This will automatically disable GF2 for Medium and Easy modes
+      if (typeof window.wasmModule.ccall === 'function') {
+          window.wasmModule.ccall('set_solver_difficulty', 'void', ['string'], [this.difficulty]);
+      }
+      
+      // Tell WASM to defer GF2 processing until all other rules are exhausted
+      if (typeof window.wasmModule._set_prioritize_gf2 === 'function') {
+          window.wasmModule._set_prioritize_gf2(false);
+      }
+      
       window.wasmModule._deduct(); // Full AC-3 constraint propagation
       
       if (typeof window.wasmModule._get_first_deduced_edge === 'function') {

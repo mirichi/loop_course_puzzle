@@ -46,6 +46,35 @@ static int8_t genCells[MAX_ROWS][MAX_COLS];
 // Feature Toggles for Benchmarking
 bool enableAdvancedAC3 = true;
 bool restrictLogicToLocal = false;
+bool enableGF2 = true;
+bool prioritizeGF2 = true;
+
+EMSCRIPTEN_KEEPALIVE
+void set_prioritize_gf2(bool enabled) {
+    prioritizeGF2 = enabled;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void set_solver_difficulty(const char* difficulty) {
+    extern int lookaheadMaxLimit;
+    if (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) {
+        restrictLogicToLocal = true;
+        enableGF2 = false;
+        lookaheadMaxLimit = 0;
+    } else if (strcmp(difficulty, "Medium") == 0 || strcmp(difficulty, "medium") == 0) {
+        restrictLogicToLocal = false;
+        enableGF2 = false;
+        lookaheadMaxLimit = 0;
+    } else if (strcmp(difficulty, "Hard") == 0 || strcmp(difficulty, "hard") == 0) {
+        restrictLogicToLocal = false;
+        enableGF2 = true;
+        lookaheadMaxLimit = 0;
+    } else if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
+        restrictLogicToLocal = false;
+        enableGF2 = true;
+        lookaheadMaxLimit = 0; // Disabled as per user request
+    }
+}
 
 
 // pre-allocated stack for backtracking search to avoid constant allocations
@@ -225,11 +254,21 @@ typedef struct {
 
 void init_lut();
 bool applyLUT();
+void init_boundary_luts();
+bool applyBoundaryLUTs();
+
+// Precompute LUTs automatically when the WASM module is loaded
+__attribute__((constructor))
+void precompute_luts_on_startup() {
+    init_lut();
+    init_boundary_luts();
+}
 
 // API functions
 EMSCRIPTEN_KEEPALIVE
 void init_grid(int r, int c) {
     init_lut();
+    init_boundary_luts();
     rows = r;
     cols = c;
     numH = (r + 1) * c;
@@ -779,13 +818,14 @@ bool applyStaticRules() {
     dsuInitFromCurrent();
     clearStacks();
     
-    initGlobalGF2();
-    
-    // Sync pre-existing edges into the GF2 update queue.
-    // This ensures that lines drawn by the user (or previous states) are processed by GF2 during AC-3.
-    for (int i = 0; i < numEdges; i++) {
-        if (edgeStates[i] != 0) {
-            gf2_update_queue[gf2_queue_tail++] = i;
+    if (enableGF2) {
+        initGlobalGF2();
+        
+        // Sync pre-existing edges into the GF2 update queue.
+        for (int i = 0; i < numEdges; i++) {
+            if (edgeStates[i] != 0) {
+                gf2_update_queue[gf2_queue_tail++] = i;
+            }
         }
     }
 
@@ -1243,6 +1283,9 @@ bool applyStaticRules() {
     if (!restrictLogicToLocal) {
         current_rule_name = "定石: パターン辞書(LUT)の一致";
         if (!applyLUT()) return false;
+        
+        current_rule_name = "定石: 境界・角パターン辞書(LUT)の一致";
+        if (!applyBoundaryLUTs()) return false;
         
         int afterLUT = 0;
         for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
@@ -1728,7 +1771,7 @@ static inline bool deductIncremental() {
                    cellStackTop, dotStackTop);
             return false; // Force stop
         }
-        while (cellStackTop > 0 || dotStackTop > 0 || gf2_queue_head < gf2_queue_tail) {
+        while (cellStackTop > 0 || dotStackTop > 0 || (enableGF2 && prioritizeGF2 && gf2_queue_head < gf2_queue_tail)) {
             // 1. Process cells
             int cellIdx = popCell();
             if (cellIdx != -1) {
@@ -2240,15 +2283,26 @@ static inline bool deductIncremental() {
             }
             
             // 3. Process GF(2)
-            if (gf2_queue_head < gf2_queue_tail) {
-                current_rule_name = "全体制約: 連立方程式(GF2)の更新";
-                int e = gf2_update_queue[gf2_queue_head++];
-                int val = (edgeStates[e] == 1) ? 1 : 0;
-                if (!updateGlobalGF2(e, val)) return false;
+            if (enableGF2) {
+                if (prioritizeGF2 && gf2_queue_head < gf2_queue_tail) {
+                    current_rule_name = "全体制約: 連立方程式(GF2)の更新";
+                    int e = gf2_update_queue[gf2_queue_head++];
+                    int val = (edgeStates[e] == 1) ? 1 : 0;
+                    if (!updateGlobalGF2(e, val)) return false;
+                }
+            } else {
+                gf2_queue_head = gf2_queue_tail; // Flush
             }
         }
         
         if (restrictLogicToLocal) {
+            if (enableGF2 && !prioritizeGF2 && gf2_queue_head < gf2_queue_tail) {
+                current_rule_name = "全体制約: 連立方程式(GF2)の更新";
+                int e = gf2_update_queue[gf2_queue_head++];
+                int val = (edgeStates[e] == 1) ? 1 : 0;
+                if (!updateGlobalGF2(e, val)) return false;
+                continue;
+            }
             if (cellStackTop == 0 && dotStackTop == 0 && gf2_queue_head == gf2_queue_tail) {
                 break;
             }
@@ -2317,8 +2371,18 @@ static inline bool deductIncremental() {
                 if (!runUniversalParityCheck()) return false;
             }
             
-            if (cellStackTop == 0 && dotStackTop == 0 && gf2_queue_head == gf2_queue_tail) {
-                break;
+            if (cellStackTop == 0 && dotStackTop == 0) {
+                if (enableGF2 && !prioritizeGF2 && gf2_queue_head < gf2_queue_tail) {
+                    current_rule_name = "全体制約: 連立方程式(GF2)の更新";
+                    int e = gf2_update_queue[gf2_queue_head++];
+                    int val = (edgeStates[e] == 1) ? 1 : 0;
+                    if (!updateGlobalGF2(e, val)) return false;
+                    continue; // Go back to the top of the outer loop
+                }
+                
+                if (gf2_queue_head == gf2_queue_tail) {
+                    break;
+                }
             }
         }
     }
@@ -3588,8 +3652,7 @@ static bool checkSolvability(const char* difficulty) {
     int result = 0;
     
     // For Easy mode, disable all global rules to ensure it can be solved purely by local patterns
-    extern bool restrictLogicToLocal;
-    restrictLogicToLocal = (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0);
+    set_solver_difficulty(difficulty);
 
     if (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) {
         // Easy mode: strict 0-step lookahead (pure deduction)
@@ -3609,14 +3672,8 @@ static bool checkSolvability(const char* difficulty) {
             result = 0;
         }
     } else {
-        // Set lookahead limits based on difficulty
-        lookaheadConfirmedCount = 0;
-        if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
-            lookaheadMaxLimit = 3; // Enable lookahead for Master
-        } else {
-            lookaheadMaxLimit = 0; // Disabled for Easy, Medium, Hard
-        }
         // Human solvability check
+        set_solver_difficulty(difficulty);
         result = check_human_solvability();
         lookaheadMaxLimit = 0; // Reset limit
     }
@@ -3645,6 +3702,7 @@ void generate_puzzle_wasm(const char* difficulty) {
     lutEdgesTotal = 0;
     
     printf("[C Debug] Starting generate_puzzle_wasm. diff=%s, rows=%d, cols=%d\n", difficulty, rows, cols);
+    set_solver_difficulty(difficulty);
 
     // 1. Generate a random solved loop and calculate target clues until initial board is solvable
     bool initSolvable = false;
@@ -3834,7 +3892,9 @@ void generate_puzzle_wasm(const char* difficulty) {
 
         currentClueCount -= batchRemovedClues;
 
-        if (checkSolvability(difficulty)) {
+        bool batchSolvable = checkSolvability(difficulty);
+
+        if (batchSolvable) {
             // Batch removal successful
             i += b;
         } else {
@@ -3871,6 +3931,45 @@ void generate_puzzle_wasm(const char* difficulty) {
 
     printf("[C Generator] Finished symmetric minimization! Final clues remaining: %d/%d (%d%%) | FastPath: %d/%d checks | LookaheadTests: %d | ForcedEdges: %d | StaticEdges: %d | LUTEdges: %d\n", 
            currentClueCount, totalCells, (currentClueCount * 100) / totalCells, fastPathCount, solvabilityChecks, lookaheadEdgeTests, lookaheadForcedEdgesTotal, staticRuleEdgesTotal, lutEdgesTotal);
+
+    // Pass 3: Asymmetric Single Clue Removal for Master ONLY
+    if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
+        printf("[C Generator] Starting Asymmetric Single Clue Removal for %s...\n", difficulty);
+        
+        int singleClues[MAX_CELLS];
+        int singleCount = 0;
+        for (int idx = 0; idx < totalCells; idx++) {
+            if (clues[idx] != -1) {
+                singleClues[singleCount++] = idx;
+            }
+        }
+        
+        // Shuffle single clues
+        for (int idx = singleCount - 1; idx > 0; idx--) {
+            int jdx = rand() % (idx + 1);
+            int temp = singleClues[idx];
+            singleClues[idx] = singleClues[jdx];
+            singleClues[jdx] = temp;
+        }
+        
+        for (int idx = 0; idx < singleCount; idx++) {
+            int cell = singleClues[idx];
+            int8_t savedClue = clues[cell];
+            if (savedClue == -1) continue;
+            
+            clues[cell] = -1;
+            
+            bool singleSolvable = checkSolvability(difficulty);
+            
+            if (singleSolvable) {
+                currentClueCount--;
+                printf("[C Generator] Asymmetric removal successful! Clues remaining: %d\n", currentClueCount);
+            } else {
+                clues[cell] = savedClue; // Rollback
+            }
+        }
+        printf("[C Generator] Finished asymmetric minimization! Final clues remaining: %d/%d\n", currentClueCount, totalCells);
+    }
 
 #ifdef __EMSCRIPTEN__
     EM_ASM({

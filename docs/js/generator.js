@@ -12,6 +12,7 @@ let wasmGeneratePuzzleWasm = null;
 let wasmSolvePuzzleWasm = null;
 let wasmGetSolutionPtr = null;
 let wasmSetRandomSeed = null;
+let wasmSetSolverDifficulty = null;
 
 // Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
 if (typeof createLoopCourseModule === 'function') {
@@ -32,6 +33,7 @@ if (typeof createLoopCourseModule === 'function') {
     wasmSolvePuzzleWasm = Module.cwrap('solve_puzzle_wasm', 'number', ['boolean', 'number']);
     wasmGetSolutionPtr = Module.cwrap('get_solution_ptr', 'number', ['number']);
     wasmSetRandomSeed = Module.cwrap('set_random_seed', 'void', ['number']);
+    wasmSetSolverDifficulty = Module.cwrap('set_solver_difficulty', 'void', ['string']);
     
     console.log("LoopCourse WASM module loaded successfully with cache-buster!");
     if (typeof window !== 'undefined') {
