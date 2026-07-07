@@ -49,6 +49,21 @@ bool restrictLogicToLocal = false;
 bool enableGF2 = true;
 bool prioritizeGF2 = true;
 
+// Performance Tracking
+double perf_static = 0;
+double perf_lut = 0;
+double perf_ac3 = 0;
+double perf_gf2 = 0;
+double perf_lookahead = 0;
+
+EMSCRIPTEN_KEEPALIVE double get_perf_static() { return perf_static; }
+EMSCRIPTEN_KEEPALIVE double get_perf_lut() { return perf_lut; }
+EMSCRIPTEN_KEEPALIVE double get_perf_ac3() { return perf_ac3; }
+EMSCRIPTEN_KEEPALIVE double get_perf_gf2() { return perf_gf2; }
+EMSCRIPTEN_KEEPALIVE double get_perf_lookahead() { return perf_lookahead; }
+EMSCRIPTEN_KEEPALIVE void reset_perf() { perf_static = 0; perf_lut = 0; perf_ac3 = 0; perf_gf2 = 0; perf_lookahead = 0; }
+
+
 EMSCRIPTEN_KEEPALIVE
 void set_prioritize_gf2(bool enabled) {
     prioritizeGF2 = enabled;
@@ -811,10 +826,87 @@ static bool updateGlobalGF2(int e, int val) {
     return true;
 }
 
+static bool batchUpdateGlobalGF2() {
+    if (gf2_queue_head == gf2_queue_tail) return true;
+    
+    bool row_modified[MAX_GF2_EQS] = {false};
+    
+    // 1. 全てのエッジを一括して行列から消去する
+    while (gf2_queue_head < gf2_queue_tail) {
+        int e = gf2_update_queue[gf2_queue_head++];
+        int val = (edgeStates[e] == 1) ? 1 : 0;
+        
+        for (int r = 0; r < global_gf2_num_eqs; r++) {
+            if (global_gf2_matrix[r][e / 64] & (1ULL << (e % 64))) {
+                global_gf2_matrix[r][e / 64] &= ~(1ULL << (e % 64));
+                global_gf2_constants[r] ^= val;
+                row_modified[r] = true;
+                
+                if (global_gf2_pivot[r] == e) {
+                    global_gf2_pivot[r] = -1; // ピボットを喪失
+                }
+            }
+        }
+    }
+    
+    // 2. ピボットを失った行の再ピボット選択と掃き出し
+    for (int r = 0; r < global_gf2_num_eqs; r++) {
+        if (global_gf2_pivot[r] == -1 && row_modified[r]) {
+            int new_pivot = -1;
+            for (int w = 0; w < global_gf2_words; w++) {
+                if (global_gf2_matrix[r][w] != 0) {
+                    new_pivot = w * 64 + __builtin_ctzll(global_gf2_matrix[r][w]);
+                    break;
+                }
+            }
+            global_gf2_pivot[r] = new_pivot;
+            
+            if (new_pivot != -1) {
+                for (int i = 0; i < global_gf2_num_eqs; i++) {
+                    if (i != r && (global_gf2_matrix[i][new_pivot / 64] & (1ULL << (new_pivot % 64)))) {
+                        for (int w = 0; w < global_gf2_words; w++) {
+                            global_gf2_matrix[i][w] ^= global_gf2_matrix[r][w];
+                        }
+                        global_gf2_constants[i] ^= global_gf2_constants[r];
+                        row_modified[i] = true; // 他の行も更新された
+                    }
+                }
+            } else {
+                if (global_gf2_constants[r] != 0) {
+                    return false; // 矛盾発生
+                }
+            }
+        }
+    }
+    
+    // 3. 値が確定できる変数を探す
+    for (int r = 0; r < global_gf2_num_eqs; r++) {
+        if (row_modified[r] && global_gf2_pivot[r] != -1) {
+            int popcount = 0;
+            for (int w = 0; w < global_gf2_words; w++) {
+                popcount += __builtin_popcountll(global_gf2_matrix[r][w]);
+            }
+            if (popcount == 1) {
+                int p = global_gf2_pivot[r];
+                int state = (global_gf2_constants[r] == 1) ? 1 : -1;
+                if (edgeStates[p] == 0) {
+                    if (!setEdgeState(p, state)) return false;
+                } else if (edgeStates[p] != state) {
+                    return false;
+                }
+            } else if (popcount == 0) {
+                if (global_gf2_constants[r] != 0) return false;
+                global_gf2_pivot[r] = -1;
+            }
+        }
+    }
+    return true;
+}
+
 #include "lut_module.h"
 
 EMSCRIPTEN_KEEPALIVE
-bool applyStaticRules() {
+bool applyStaticRules_internal() {
     dsuInitFromCurrent();
     clearStacks();
     
@@ -1281,11 +1373,13 @@ bool applyStaticRules() {
 
     extern bool restrictLogicToLocal;
     if (!restrictLogicToLocal) {
+        double t_lut_start = emscripten_get_now();
         current_rule_name = "定石: パターン辞書(LUT)の一致";
         if (!applyLUT()) return false;
         
         current_rule_name = "定石: 境界・角パターン辞書(LUT)の一致";
         if (!applyBoundaryLUTs()) return false;
+        perf_lut += emscripten_get_now() - t_lut_start;
         
         int afterLUT = 0;
         for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
@@ -1294,6 +1388,14 @@ bool applyStaticRules() {
     }
 
     return true;
+}
+
+EMSCRIPTEN_KEEPALIVE
+bool applyStaticRules() {
+    double t0 = emscripten_get_now();
+    bool res = applyStaticRules_internal();
+    perf_static += emscripten_get_now() - t0;
+    return res;
 }
 
 static inline bool areEdgesForcedEqual(int e1, int e2, int dotR, int dotC) {
@@ -1762,16 +1864,72 @@ static inline bool runUniversalParityCheck() {
 
 // Removed old O(V^3) runGF2Solver
 
-static inline bool deductIncremental() {
+
+// AC3 Sub-profiling
+double ac3_rule_times[100];
+int ac3_current_rule_id = -1;
+double ac3_t_start = 0;
+
+EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
+    static const char* names[] = {
+        "角制約: 2や3の角の処理",
+        "セル制約: 数字と線の数が合わない",
+        "角制約: 3の角から伸びる線",
+        "交点制約: 線は交差・分岐しない",
+        "交点制約: 角の処理(1の斜め等)",
+        "全体制約: 連立方程式(GF2)の更新",
+        "全体制約: 内外判定(Jordan Curve)",
+        "全体制約: 高度な2の制約",
+        "全体制約: 2の角のペア制約",
+        "全体制約: ループの早期閉路禁止",
+        "全体制約: 全体連結性(Bridge)"
+    };
+    if (idx < 0 || idx >= 11) return NULL;
+    return names[idx];
+}
+EMSCRIPTEN_KEEPALIVE double get_ac3_rule_time(int idx) {
+    if (idx < 0 || idx >= 11) return 0;
+    return ac3_rule_times[idx];
+}
+EMSCRIPTEN_KEEPALIVE int get_ac3_rule_count() {
+    return 11;
+}
+EMSCRIPTEN_KEEPALIVE void reset_ac3_rule_times() {
+    for (int i = 0; i < 100; i++) ac3_rule_times[i] = 0;
+}
+
+// プロファイリング（内部時間計測）のON/OFFスイッチ
+// 0にすると RECORD_AC3_TIME が空になり、ゼロオーバーヘッドで実行されます
+#define ENABLE_PROFILING 0
+
+#if ENABLE_PROFILING
+#define RECORD_AC3_TIME(new_id) do { \
+    double _t = emscripten_get_now(); \
+    if (ac3_current_rule_id >= 0) ac3_rule_times[ac3_current_rule_id] += (_t - ac3_t_start); \
+    ac3_t_start = _t; \
+    ac3_current_rule_id = (new_id); \
+} while(0)
+#else
+#define RECORD_AC3_TIME(new_id) do { \
+    ac3_current_rule_id = (new_id); \
+} while(0)
+#endif
+
+#define AC3_RETURN_FALSE do { RECORD_AC3_TIME(-1); return false; } while(0)
+#define AC3_RETURN_TRUE do { RECORD_AC3_TIME(-1); return true; } while(0)
+
+static inline bool deductIncremental_internal() {
+    ac3_current_rule_id = -1;
+    ac3_t_start = emscripten_get_now();
     int loopCount = 0;
     while (true) {
         loopCount++;
         if (loopCount > 10000) {
             printf("[C ERROR] deductIncremental infinite loop detected! stack sizes: cells=%d, dots=%d\n", 
                    cellStackTop, dotStackTop);
-            return false; // Force stop
+            AC3_RETURN_FALSE; // Force stop
         }
-        while (cellStackTop > 0 || dotStackTop > 0 || (enableGF2 && prioritizeGF2 && gf2_queue_head < gf2_queue_tail)) {
+        while (cellStackTop > 0 || dotStackTop > 0) {
             // 1. Process cells
             int cellIdx = popCell();
             if (cellIdx != -1) {
@@ -1782,11 +1940,11 @@ static inline bool deductIncremental() {
                 int c = cellIdx % cols;
                 int clue = clues[cellIdx];
                 if (clue != -1) {
-                    current_rule_name = "角制約: 2や3の角の処理";
-                    if (!check23CornerLogic(r, c)) return false;
-                    if (!check22CornerLogic(r, c)) return false;
+                    current_rule_name = "角制約: 2や3の角の処理"; RECORD_AC3_TIME(0);
+                    if (!check23CornerLogic(r, c)) AC3_RETURN_FALSE;
+                    if (!check22CornerLogic(r, c)) AC3_RETURN_FALSE;
                     
-                    current_rule_name = "セル制約: 数字と線の数が合わない";
+                    current_rule_name = "セル制約: 数字と線の数が合わない"; RECORD_AC3_TIME(1);
                     int cellEdges[4];
                     getCellEdges(r, c, cellEdges);
                     int lines = 0;
@@ -1802,54 +1960,54 @@ static inline bool deductIncremental() {
                     }
                     
                     if (lines > clue || crosses > (4 - clue)) {
-                        return false; // Contradiction
+                        AC3_RETURN_FALSE; // Contradiction
                     }
                     
                     if (undecidedCount > 0) {
                         if (lines == clue) {
                             for (int j = 0; j < undecidedCount; j++) {
                                 if (!setEdgeState(undecided[j], -1)) {
-                                    return false;
+                                    AC3_RETURN_FALSE;
                                 }
                             }
                         } else if (crosses == (4 - clue)) {
                             for (int j = 0; j < undecidedCount; j++) {
                                 if (!setEdgeState(undecided[j], 1)) {
-                                    return false;
+                                    AC3_RETURN_FALSE;
                                 }
                             }
                         }
                     }
                     
                     if (clue == 3) {
-                        current_rule_name = "角制約: 3の角から伸びる線";
+                        current_rule_name = "角制約: 3の角から伸びる線"; RECORD_AC3_TIME(2);
                         int eT = cellEdges[0];
                         int eR = cellEdges[1];
                         int eB = cellEdges[2];
                         int eL = cellEdges[3];
                         // Early SLE for Clue 3
-                        if (edgeStates[eT] == 1 && edgeStates[eL] == 1) { if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false; }
-                        if (edgeStates[eT] == 1 && edgeStates[eR] == 1) { if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; }
-                        if (edgeStates[eB] == 1 && edgeStates[eL] == 1) { if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; }
-                        if (edgeStates[eB] == 1 && edgeStates[eR] == 1) { if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false; }
+                        if (edgeStates[eT] == 1 && edgeStates[eL] == 1) { if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eT] == 1 && edgeStates[eR] == 1) { if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] == 1 && edgeStates[eL] == 1) { if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] == 1 && edgeStates[eR] == 1) { if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE; }
                         
                         int status;
                         // Down-Right dot is eB, eR. Opposite is eT, eL.
                         status = checkDiagonalChain(clue, r, c, 1, 1);
-                        if (status & 1) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
                         // Down-Left dot is eB, eL. Opposite is eT, eR.
                         status = checkDiagonalChain(clue, r, c, 1, -1);
-                        if (status & 1) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
                         // Up-Right dot is eT, eR. Opposite is eB, eL.
                         status = checkDiagonalChain(clue, r, c, -1, 1);
-                        if (status & 1) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
                         // Up-Left dot is eT, eL. Opposite is eB, eR.
                         status = checkDiagonalChain(clue, r, c, -1, -1);
-                        if (status & 1) { if (!setEdgeState(eB, 1)) return false; if (!setEdgeState(eR, 1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eT, 1)) return false; if (!setEdgeState(eL, 1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
 
                     } else if (clue == 1) {
                         int eT = cellEdges[0];
@@ -1857,28 +2015,28 @@ static inline bool deductIncremental() {
                         int eB = cellEdges[2];
                         int eL = cellEdges[3];
                         // Early SLE for Clue 1
-                        if (edgeStates[eT] == -1 && edgeStates[eL] == -1) { if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false; }
-                        if (edgeStates[eT] == -1 && edgeStates[eR] == -1) { if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; }
-                        if (edgeStates[eB] == -1 && edgeStates[eL] == -1) { if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; }
-                        if (edgeStates[eB] == -1 && edgeStates[eR] == -1) { if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false; }
+                        if (edgeStates[eT] == -1 && edgeStates[eL] == -1) { if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eT] == -1 && edgeStates[eR] == -1) { if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] == -1 && edgeStates[eL] == -1) { if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] == -1 && edgeStates[eR] == -1) { if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE; }
                         
                         int status;
                         // Down-Right dot is eB, eR. Opposite is eT, eL.
                         status = checkDiagonalChain(clue, r, c, 1, 1);
-                        if (status & 1) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
                         // Down-Left dot is eB, eL. Opposite is eT, eR.
                         status = checkDiagonalChain(clue, r, c, 1, -1);
-                        if (status & 1) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
                         // Up-Right dot is eT, eR. Opposite is eB, eL.
                         status = checkDiagonalChain(clue, r, c, -1, 1);
-                        if (status & 1) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
                         // Up-Left dot is eT, eL. Opposite is eB, eR.
                         status = checkDiagonalChain(clue, r, c, -1, -1);
-                        if (status & 1) { if (!setEdgeState(eB, -1)) return false; if (!setEdgeState(eR, -1)) return false; }
-                        if (status & 2) { if (!setEdgeState(eT, -1)) return false; if (!setEdgeState(eL, -1)) return false; }
+                        if (status & 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                        if (status & 2) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
 
                     } else if (clue == 2) {
                         int eT = cellEdges[0];
@@ -1890,29 +2048,29 @@ static inline bool deductIncremental() {
                         int outT_L = getHEdgeIndex(r, c - 1);
                         int outL_T = getVEdgeIndex(r - 1, c);
                         if (outT_L != -1 && outL_T != -1 && edgeStates[outT_L] != 0 && edgeStates[outT_L] == edgeStates[outL_T]) {
-                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; // Up-Right
-                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; // Down-Left
+                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) AC3_RETURN_FALSE; // Up-Right
+                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) AC3_RETURN_FALSE; // Down-Left
                         }
                         // Top-Right Dot Outside Edges: H(r, c+1) and V(r-1, c+1)
                         int outT_R = getHEdgeIndex(r, c + 1);
                         int outR_T = getVEdgeIndex(r - 1, c + 1);
                         if (outT_R != -1 && outR_T != -1 && edgeStates[outT_R] != 0 && edgeStates[outT_R] == edgeStates[outR_T]) {
-                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false; // Up-Left
-                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false;   // Down-Right
+                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE; // Up-Left
+                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) AC3_RETURN_FALSE;   // Down-Right
                         }
                         // Bottom-Left Dot Outside Edges: H(r+1, c-1) and V(r+1, c)
                         int outB_L = getHEdgeIndex(r + 1, c - 1);
                         int outL_B = getVEdgeIndex(r + 1, c);
                         if (outB_L != -1 && outL_B != -1 && edgeStates[outB_L] != 0 && edgeStates[outB_L] == edgeStates[outL_B]) {
-                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false; // Up-Left
-                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false;   // Down-Right
+                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE; // Up-Left
+                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) AC3_RETURN_FALSE;   // Down-Right
                         }
                         // Bottom-Right Dot Outside Edges: H(r+1, c+1) and V(r+1, c+1)
                         int outB_R = getHEdgeIndex(r + 1, c + 1);
                         int outR_B = getVEdgeIndex(r + 1, c + 1);
                         if (outB_R != -1 && outR_B != -1 && edgeStates[outB_R] != 0 && edgeStates[outB_R] == edgeStates[outR_B]) {
-                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false; // Up-Right
-                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false; // Down-Left
+                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) AC3_RETURN_FALSE; // Up-Right
+                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) AC3_RETURN_FALSE; // Down-Left
                         }
                     }
                     
@@ -1923,27 +2081,27 @@ static inline bool deductIncremental() {
                     int eB = cellEdges[2];
                     int eL = cellEdges[3];
                     if (edgeStates[eT] != 0 && edgeStates[eL] != 0 && edgeStates[eT] != edgeStates[eL]) {
-                        if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false;
+                        if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE;
                         if (clue == 2 && (edgeStates[eB] == 0 || edgeStates[eR] == 0)) {
-                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false;
+                            if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) AC3_RETURN_FALSE;
                         }
                     }
                     if (edgeStates[eT] != 0 && edgeStates[eR] != 0 && edgeStates[eT] != edgeStates[eR]) {
-                        if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false;
+                        if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) AC3_RETURN_FALSE;
                         if (clue == 2 && (edgeStates[eB] == 0 || edgeStates[eL] == 0)) {
-                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false;
+                            if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) AC3_RETURN_FALSE;
                         }
                     }
                     if (edgeStates[eB] != 0 && edgeStates[eL] != 0 && edgeStates[eB] != edgeStates[eL]) {
-                        if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) return false;
+                        if (!propagateDiagonal2s(r + 1, c - 1, 1, -1)) AC3_RETURN_FALSE;
                         if (clue == 2 && (edgeStates[eT] == 0 || edgeStates[eR] == 0)) {
-                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) return false;
+                            if (!propagateDiagonal2s(r - 1, c + 1, -1, 1)) AC3_RETURN_FALSE;
                         }
                     }
                     if (edgeStates[eB] != 0 && edgeStates[eR] != 0 && edgeStates[eB] != edgeStates[eR]) {
-                        if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) return false;
+                        if (!propagateDiagonal2s(r + 1, c + 1, 1, 1)) AC3_RETURN_FALSE;
                         if (clue == 2 && (edgeStates[eT] == 0 || edgeStates[eL] == 0)) {
-                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) return false;
+                            if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE;
                         }
                     }
                     
@@ -1954,12 +2112,12 @@ static inline bool deductIncremental() {
                             int tA = getHEdgeIndex(r, c);
                             int lA = getVEdgeIndex(r, c);
                             if (edgeStates[tA] == -1 || edgeStates[lA] == -1) {
-                                if (edgeStates[tA] == -1) { if (!setEdgeState(lA, 1)) return false; }
-                                if (edgeStates[lA] == -1) { if (!setEdgeState(tA, 1)) return false; }
+                                if (edgeStates[tA] == -1) { if (!setEdgeState(lA, 1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[lA] == -1) { if (!setEdgeState(tA, 1)) AC3_RETURN_FALSE; }
                                 int rB = getVEdgeIndex(r + 1, c + 2);
                                 int bB = getHEdgeIndex(r + 2, c + 1);
-                                if (!setEdgeState(rB, 1)) return false;
-                                if (!setEdgeState(bB, 1)) return false;
+                                if (!setEdgeState(rB, 1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(bB, 1)) AC3_RETURN_FALSE;
                             }
                         }
                         // Bottom-Left
@@ -1967,12 +2125,12 @@ static inline bool deductIncremental() {
                             int tB = getHEdgeIndex(r, c);
                             int rB = getVEdgeIndex(r, c + 1);
                             if (edgeStates[tB] == -1 || edgeStates[rB] == -1) {
-                                if (edgeStates[tB] == -1) { if (!setEdgeState(rB, 1)) return false; }
-                                if (edgeStates[rB] == -1) { if (!setEdgeState(tB, 1)) return false; }
+                                if (edgeStates[tB] == -1) { if (!setEdgeState(rB, 1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[rB] == -1) { if (!setEdgeState(tB, 1)) AC3_RETURN_FALSE; }
                                 int lB = getVEdgeIndex(r + 1, c - 1);
                                 int bB = getHEdgeIndex(r + 2, c - 1);
-                                if (!setEdgeState(lB, 1)) return false;
-                                if (!setEdgeState(bB, 1)) return false;
+                                if (!setEdgeState(lB, 1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(bB, 1)) AC3_RETURN_FALSE;
                             }
                         }
                         // Top-Right
@@ -1980,12 +2138,12 @@ static inline bool deductIncremental() {
                             int bC = getHEdgeIndex(r + 1, c);
                             int lC = getVEdgeIndex(r, c);
                             if (edgeStates[bC] == -1 || edgeStates[lC] == -1) {
-                                if (edgeStates[bC] == -1) { if (!setEdgeState(lC, 1)) return false; }
-                                if (edgeStates[lC] == -1) { if (!setEdgeState(bC, 1)) return false; }
+                                if (edgeStates[bC] == -1) { if (!setEdgeState(lC, 1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[lC] == -1) { if (!setEdgeState(bC, 1)) AC3_RETURN_FALSE; }
                                 int rC = getVEdgeIndex(r - 1, c + 2);
                                 int tC = getHEdgeIndex(r - 1, c + 1);
-                                if (!setEdgeState(rC, 1)) return false;
-                                if (!setEdgeState(tC, 1)) return false;
+                                if (!setEdgeState(rC, 1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(tC, 1)) AC3_RETURN_FALSE;
                             }
                         }
                         // Top-Left
@@ -1993,12 +2151,12 @@ static inline bool deductIncremental() {
                             int bD = getHEdgeIndex(r + 1, c);
                             int rD = getVEdgeIndex(r, c + 1);
                             if (edgeStates[bD] == -1 || edgeStates[rD] == -1) {
-                                if (edgeStates[bD] == -1) { if (!setEdgeState(rD, 1)) return false; }
-                                if (edgeStates[rD] == -1) { if (!setEdgeState(bD, 1)) return false; }
+                                if (edgeStates[bD] == -1) { if (!setEdgeState(rD, 1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[rD] == -1) { if (!setEdgeState(bD, 1)) AC3_RETURN_FALSE; }
                                 int lD = getVEdgeIndex(r - 1, c - 1);
                                 int tD = getHEdgeIndex(r - 1, c - 1);
-                                if (!setEdgeState(lD, 1)) return false;
-                                if (!setEdgeState(tD, 1)) return false;
+                                if (!setEdgeState(lD, 1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(tD, 1)) AC3_RETURN_FALSE;
                             }
                         }
                     }
@@ -2008,7 +2166,7 @@ static inline bool deductIncremental() {
             // 2. Process dots
             int dotIdx = popDot();
             if (dotIdx != -1) {
-                current_rule_name = "交点制約: 線は交差・分岐しない";
+                current_rule_name = "交点制約: 線は交差・分岐しない"; RECORD_AC3_TIME(3);
                 dbgSource = "dot";
                 dbgDot = dotIdx;
                 dbgCell = -1;
@@ -2017,7 +2175,7 @@ static inline bool deductIncremental() {
                 
                 // --- NEW GENERALIZED 1-1 / 1-3 DOT BORDER LOGIC ---
                 if (enableAdvancedAC3) {
-                    if (!checkDotBorderLogic(r, c)) return false;
+                    if (!checkDotBorderLogic(r, c)) AC3_RETURN_FALSE;
                 }
                 // --------------------------------------------------
 
@@ -2055,7 +2213,7 @@ static inline bool deductIncremental() {
                                 edgeStates[edgeIdx] = 0;
                                 if (!solved) {
                                     // It is a premature small loop. It must be a cross!
-                                    if (!setEdgeState(edgeIdx, -1)) return false;
+                                    if (!setEdgeState(edgeIdx, -1)) AC3_RETURN_FALSE;
                                     crosses++;
                                     continue;
                                 }
@@ -2068,23 +2226,23 @@ static inline bool deductIncremental() {
                 }
                 
                 if (lines > 2) {
-                    return false; // Contradiction: degree limit exceeded
+                    AC3_RETURN_FALSE; // Contradiction: degree limit exceeded
                 }
                 
                 if (undecidedCount > 0) {
                     if (lines == 2) {
                         for (int j = 0; j < undecidedCount; j++) {
                             if (!setEdgeState(undecided[j], -1)) {
-                                return false;
+                                AC3_RETURN_FALSE;
                             }
                         }
                     } else if (lines == 1 && undecidedCount == 1) {
                         if (!setEdgeState(undecided[0], 1)) {
-                            return false;
+                            AC3_RETURN_FALSE;
                         }
                     } else if (lines == 0 && undecidedCount == 1) {
                         if (!setEdgeState(undecided[0], -1)) {
-                            return false;
+                            AC3_RETURN_FALSE;
                         }
                     } else if (lines == 0 && undecidedCount == 2) {
                         // Rule A: Generalized Corner Heuristic
@@ -2115,22 +2273,22 @@ static inline bool deductIncremental() {
                                 int cellIdx = cr * cols + cc;
                                 int clue = clues[cellIdx];
                                 if (clue == 3) {
-                                    if (!setEdgeState(e1, 1)) return false;
-                                    if (!setEdgeState(e2, 1)) return false;
+                                    if (!setEdgeState(e1, 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(e2, 1)) AC3_RETURN_FALSE;
                                 } else if (clue == 1) {
-                                    if (!setEdgeState(e1, -1)) return false;
-                                    if (!setEdgeState(e2, -1)) return false;
+                                    if (!setEdgeState(e1, -1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(e2, -1)) AC3_RETURN_FALSE;
                                 }
                             }
                         }
                     }
                 } else {
                     if (lines != 0 && lines != 2) {
-                        return false; // Contradiction: degree must be 0 or 2
+                        AC3_RETURN_FALSE; // Contradiction: degree must be 0 or 2
                     }
                 }
 
-                current_rule_name = "交点制約: 角の処理(1の斜め等)";
+                current_rule_name = "交点制約: 角の処理(1の斜め等)"; RECORD_AC3_TIME(4);
                 // 3. Advanced Rule: Line entering a 3 corner
                 int eL = getHEdgeIndex(r, c - 1);
                 int eR = getHEdgeIndex(r, c);
@@ -2140,37 +2298,37 @@ static inline bool deductIncremental() {
                 // Bottom-Right cell (cr=r, cc=c)
                 if (getClue(r, c) == 3) {
                     if ((edgeStates[eL] == 1) || (edgeStates[eT] == 1)) {
-                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
-                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
-                        if (!setEdgeState(getHEdgeIndex(r + 1, c), 1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r, c + 1), 1)) return false;
+                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; }
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c), 1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r, c + 1), 1)) AC3_RETURN_FALSE;
                     }
                 }
                 // Bottom-Left cell (cr=r, cc=c-1)
                 if (getClue(r, c - 1) == 3) {
                     if ((edgeStates[eR] == 1) || (edgeStates[eT] == 1)) {
-                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
-                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
-                        if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), 1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r, c - 1), 1)) return false;
+                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; }
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), 1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r, c - 1), 1)) AC3_RETURN_FALSE;
                     }
                 }
                 // Top-Right cell (cr=r-1, cc=c)
                 if (getClue(r - 1, c) == 3) {
                     if ((edgeStates[eL] == 1) || (edgeStates[eB] == 1)) {
-                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
-                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
-                        if (!setEdgeState(getHEdgeIndex(r - 1, c), 1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), 1)) return false;
+                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; }
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c), 1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), 1)) AC3_RETURN_FALSE;
                     }
                 }
                 // Top-Left cell (cr=r-1, cc=c-1)
                 if (getClue(r - 1, c - 1) == 3) {
                     if ((edgeStates[eR] == 1) || (edgeStates[eB] == 1)) {
-                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
-                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
-                        if (!setEdgeState(getHEdgeIndex(r - 1, c - 1), 1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), 1)) return false;
+                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; }
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c - 1), 1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), 1)) AC3_RETURN_FALSE;
                     }
                 }
                 
@@ -2182,15 +2340,15 @@ static inline bool deductIncremental() {
                     int oppB = getHEdgeIndex(r + 1, c);
                     int oppR = getVEdgeIndex(r, c + 1);
                     if (entering_possible && (edgeStates[oppB] == -1 || edgeStates[oppR] == -1)) {
-                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
-                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
+                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; }
                         entered = true;
                     }
                     if (entered) {
-                        if (edgeStates[oppB] == -1) { if (!setEdgeState(oppR, 1)) return false; }
-                        else if (edgeStates[oppB] == 1) { if (!setEdgeState(oppR, -1)) return false; }
-                        if (edgeStates[oppR] == -1) { if (!setEdgeState(oppB, 1)) return false; }
-                        else if (edgeStates[oppR] == 1) { if (!setEdgeState(oppB, -1)) return false; }
+                        if (edgeStates[oppB] == -1) { if (!setEdgeState(oppR, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppB] == 1) { if (!setEdgeState(oppR, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[oppR] == -1) { if (!setEdgeState(oppB, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppR] == 1) { if (!setEdgeState(oppB, -1)) AC3_RETURN_FALSE; }
                     }
                 }
                 // Bottom-Left cell (cr=r, cc=c-1)
@@ -2200,15 +2358,15 @@ static inline bool deductIncremental() {
                     int oppB = getHEdgeIndex(r + 1, c - 1);
                     int oppL = getVEdgeIndex(r, c - 1);
                     if (entering_possible && (edgeStates[oppB] == -1 || edgeStates[oppL] == -1)) {
-                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
-                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) return false; }
+                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eT] != 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; }
                         entered = true;
                     }
                     if (entered) {
-                        if (edgeStates[oppB] == -1) { if (!setEdgeState(oppL, 1)) return false; }
-                        else if (edgeStates[oppB] == 1) { if (!setEdgeState(oppL, -1)) return false; }
-                        if (edgeStates[oppL] == -1) { if (!setEdgeState(oppB, 1)) return false; }
-                        else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppB, -1)) return false; }
+                        if (edgeStates[oppB] == -1) { if (!setEdgeState(oppL, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppB] == 1) { if (!setEdgeState(oppL, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[oppL] == -1) { if (!setEdgeState(oppB, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppB, -1)) AC3_RETURN_FALSE; }
                     }
                 }
                 // Top-Right cell (cr=r-1, cc=c)
@@ -2218,15 +2376,15 @@ static inline bool deductIncremental() {
                     int oppT = getHEdgeIndex(r - 1, c);
                     int oppR = getVEdgeIndex(r - 1, c + 1);
                     if (entering_possible && (edgeStates[oppT] == -1 || edgeStates[oppR] == -1)) {
-                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) return false; }
-                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
+                        if (edgeStates[eL] != 1) { if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; }
                         entered = true;
                     }
                     if (entered) {
-                        if (edgeStates[oppT] == -1) { if (!setEdgeState(oppR, 1)) return false; }
-                        else if (edgeStates[oppT] == 1) { if (!setEdgeState(oppR, -1)) return false; }
-                        if (edgeStates[oppR] == -1) { if (!setEdgeState(oppT, 1)) return false; }
-                        else if (edgeStates[oppR] == 1) { if (!setEdgeState(oppT, -1)) return false; }
+                        if (edgeStates[oppT] == -1) { if (!setEdgeState(oppR, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppT] == 1) { if (!setEdgeState(oppR, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[oppR] == -1) { if (!setEdgeState(oppT, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppR] == 1) { if (!setEdgeState(oppT, -1)) AC3_RETURN_FALSE; }
                     }
                 }
                 // Top-Left cell (cr=r-1, cc=c-1)
@@ -2236,15 +2394,15 @@ static inline bool deductIncremental() {
                     int oppT = getHEdgeIndex(r - 1, c - 1);
                     int oppL = getVEdgeIndex(r - 1, c - 1);
                     if (entering_possible && (edgeStates[oppT] == -1 || edgeStates[oppL] == -1)) {
-                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) return false; }
-                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) return false; }
+                        if (edgeStates[eR] != 1) { if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[eB] != 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; }
                         entered = true;
                     }
                     if (entered) {
-                        if (edgeStates[oppT] == -1) { if (!setEdgeState(oppL, 1)) return false; }
-                        else if (edgeStates[oppT] == 1) { if (!setEdgeState(oppL, -1)) return false; }
-                        if (edgeStates[oppL] == -1) { if (!setEdgeState(oppT, 1)) return false; }
-                        else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppT, -1)) return false; }
+                        if (edgeStates[oppT] == -1) { if (!setEdgeState(oppL, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppT] == 1) { if (!setEdgeState(oppL, -1)) AC3_RETURN_FALSE; }
+                        if (edgeStates[oppL] == -1) { if (!setEdgeState(oppT, 1)) AC3_RETURN_FALSE; }
+                        else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppT, -1)) AC3_RETURN_FALSE; }
                     }
                 }
 
@@ -2253,54 +2411,45 @@ static inline bool deductIncremental() {
                 if (getClue(r, c) == 1) {
                     bool entered = (edgeStates[eL] == 1 && edgeStates[eT] == -1) || (edgeStates[eL] == -1 && edgeStates[eT] == 1);
                     if (entered) {
-                        if (!setEdgeState(getHEdgeIndex(r + 1, c), -1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r, c + 1), -1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c), -1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r, c + 1), -1)) AC3_RETURN_FALSE;
                     }
                 }
                 // Bottom-Left cell (cr=r, cc=c-1)
                 if (getClue(r, c - 1) == 1) {
                     bool entered = (edgeStates[eR] == 1 && edgeStates[eT] == -1) || (edgeStates[eR] == -1 && edgeStates[eT] == 1);
                     if (entered) {
-                        if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), -1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), -1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) AC3_RETURN_FALSE;
                     }
                 }
                 // Top-Right cell (cr=r-1, cc=c)
                 if (getClue(r - 1, c) == 1) {
                     bool entered = (edgeStates[eL] == 1 && edgeStates[eB] == -1) || (edgeStates[eL] == -1 && edgeStates[eB] == 1);
                     if (entered) {
-                        if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) AC3_RETURN_FALSE;
                     }
                 }
                 if (getClue(r - 1, c - 1) == 1) {
                     bool entered = (edgeStates[eR] == 1 && edgeStates[eB] == -1) || (edgeStates[eR] == -1 && edgeStates[eB] == 1);
                     if (entered) {
-                        if (!setEdgeState(getHEdgeIndex(r - 1, c - 1), -1)) return false;
-                        if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), -1)) return false;
+                        if (!setEdgeState(getHEdgeIndex(r - 1, c - 1), -1)) AC3_RETURN_FALSE;
+                        if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), -1)) AC3_RETURN_FALSE;
                     }
                 }
             }
             
-            // 3. Process GF(2)
-            if (enableGF2) {
-                if (prioritizeGF2 && gf2_queue_head < gf2_queue_tail) {
-                    current_rule_name = "全体制約: 連立方程式(GF2)の更新";
-                    int e = gf2_update_queue[gf2_queue_head++];
-                    int val = (edgeStates[e] == 1) ? 1 : 0;
-                    if (!updateGlobalGF2(e, val)) return false;
-                }
-            } else {
+            // 3. Process GF(2) (Flush if disabled)
+            if (!enableGF2) {
                 gf2_queue_head = gf2_queue_tail; // Flush
             }
         }
         
         if (restrictLogicToLocal) {
-            if (enableGF2 && !prioritizeGF2 && gf2_queue_head < gf2_queue_tail) {
-                current_rule_name = "全体制約: 連立方程式(GF2)の更新";
-                int e = gf2_update_queue[gf2_queue_head++];
-                int val = (edgeStates[e] == 1) ? 1 : 0;
-                if (!updateGlobalGF2(e, val)) return false;
+            if (enableGF2 && gf2_queue_head < gf2_queue_tail) {
+                current_rule_name = "全体制約: 連立方程式(GF2)の更新"; RECORD_AC3_TIME(5);
+                if (!batchUpdateGlobalGF2()) AC3_RETURN_FALSE;
                 continue;
             }
             if (cellStackTop == 0 && dotStackTop == 0 && gf2_queue_head == gf2_queue_tail) {
@@ -2310,13 +2459,13 @@ static inline bool deductIncremental() {
         }
 
         // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
-        current_rule_name = "全体制約: 内外判定(Jordan Curve)";
-        if (!deductJordanCurveParity()) return false;
+        current_rule_name = "全体制約: 内外判定(Jordan Curve)"; RECORD_AC3_TIME(6);
+        if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
         
-        current_rule_name = "全体制約: 高度な2の制約";
-        if (!applyAdvanced2Rules()) return false;
+        current_rule_name = "全体制約: 高度な2の制約"; RECORD_AC3_TIME(7);
+        if (!applyAdvanced2Rules()) AC3_RETURN_FALSE;
         
-        current_rule_name = "全体制約: 2の角のペア制約";
+        current_rule_name = "全体制約: 2の角のペア制約"; RECORD_AC3_TIME(8);
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 if (clues[r * cols + c] == 2) {
@@ -2324,19 +2473,19 @@ static inline bool deductIncremental() {
                     int tl_h = getHEdgeIndex(r, c - 1);
                     int br_v = getVEdgeIndex(r + 1, c + 1);
                     int br_h = getHEdgeIndex(r + 1, c + 1);
-                    if (!deductParityPair(tl_v, tl_h, br_v, br_h)) return false;
+                    if (!deductParityPair(tl_v, tl_h, br_v, br_h)) AC3_RETURN_FALSE;
                     
                     int tr_v = getVEdgeIndex(r - 1, c + 1);
                     int tr_h = getHEdgeIndex(r, c + 1);
                     int bl_v = getVEdgeIndex(r + 1, c);
                     int bl_h = getHEdgeIndex(r + 1, c - 1);
-                    if (!deductParityPair(tr_v, tr_h, bl_v, bl_h)) return false;
+                    if (!deductParityPair(tr_v, tr_h, bl_v, bl_h)) AC3_RETURN_FALSE;
                 }
             }
         }
         
         bool cycleChanged = false;
-        current_rule_name = "全体制約: ループの早期閉路禁止";
+        current_rule_name = "全体制約: ループの早期閉路禁止"; RECORD_AC3_TIME(9);
         for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
                 int dotA, dotB;
@@ -2357,7 +2506,7 @@ static inline bool deductIncremental() {
                     bool solved = isSolved();
                     edgeStates[i] = 0;
                     if (!solved) {
-                        if (!setEdgeState(i, -1)) return false;
+                        if (!setEdgeState(i, -1)) AC3_RETURN_FALSE;
                         if (edgeStates[i] == -1) cycleChanged = true;
                     }
                 }
@@ -2367,16 +2516,14 @@ static inline bool deductIncremental() {
         if (cellStackTop == 0 && dotStackTop == 0 && !cycleChanged) {
             // Only when absolutely everything is exhausted, run the O(V+E) Bridge Detection
             if (enableAdvancedAC3) {
-                current_rule_name = "全体制約: 全体連結性(Bridge)";
-                if (!runUniversalParityCheck()) return false;
+                current_rule_name = "全体制約: 全体連結性(Bridge)"; RECORD_AC3_TIME(10);
+                if (!runUniversalParityCheck()) AC3_RETURN_FALSE;
             }
             
             if (cellStackTop == 0 && dotStackTop == 0) {
-                if (enableGF2 && !prioritizeGF2 && gf2_queue_head < gf2_queue_tail) {
-                    current_rule_name = "全体制約: 連立方程式(GF2)の更新";
-                    int e = gf2_update_queue[gf2_queue_head++];
-                    int val = (edgeStates[e] == 1) ? 1 : 0;
-                    if (!updateGlobalGF2(e, val)) return false;
+                if (enableGF2 && gf2_queue_head < gf2_queue_tail) {
+                    current_rule_name = "全体制約: 連立方程式(GF2)の更新"; RECORD_AC3_TIME(5);
+                    if (!batchUpdateGlobalGF2()) AC3_RETURN_FALSE;
                     continue; // Go back to the top of the outer loop
                 }
                 
@@ -2386,7 +2533,14 @@ static inline bool deductIncremental() {
             }
         }
     }
-    return true;
+    AC3_RETURN_TRUE;
+}
+
+static inline bool deductIncremental() {
+    double t0 = emscripten_get_now();
+    bool res = deductIncremental_internal();
+    perf_ac3 += emscripten_get_now() - t0;
+    return res;
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -2922,6 +3076,7 @@ int check_human_solvability() {
 
         changed = false;
 
+        double t_lookahead_start = emscripten_get_now();
         // 2. Perform 1-Step Lookahead on Undecided Edges
         for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
@@ -2989,6 +3144,7 @@ int check_human_solvability() {
                 }
             } // closes if (edgeStates[i] == 0)
         } // closes for loop
+        perf_lookahead += emscripten_get_now() - t_lookahead_start;
     } // closes while (changed)
     return -2; // Stalled: Not solvable by 1-step lookahead human logic
 }
