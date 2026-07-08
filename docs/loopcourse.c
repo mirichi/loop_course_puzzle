@@ -97,6 +97,11 @@ void set_solver_difficulty(const char* difficulty) {
 static int8_t backupStack[MAX_BACKTRACK_DEPTH][MAX_EDGES];
 static int8_t backupAfterDeductStack[MAX_BACKTRACK_DEPTH][MAX_EDGES];
 
+extern int ac3_current_rule_id;
+extern int ac3_rule_hit_counts[100];
+#define RECORD_AC3_HIT() do { \
+    if (ac3_current_rule_id >= 0) ac3_rule_hit_counts[ac3_current_rule_id]++; \
+} while(0)
 
 // Graph adjacency list arrays for loop connection tracing (avoids allocations)
 static int adj[MAX_DOTS][4];
@@ -377,6 +382,7 @@ static inline bool setEdgeState(int edgeIdx, int8_t state) {
     if (edgeStates[edgeIdx] != 0) return false;    // Contradiction: edge is already determined to a different state
     
     edgeStates[edgeIdx] = state;
+    RECORD_AC3_HIT();
     
     if (deduction_history_count < MAX_EDGES * 2) {
         deduction_rule_names[deduction_history_count] = current_rule_name;
@@ -1867,6 +1873,7 @@ static inline bool runUniversalParityCheck() {
 
 // AC3 Sub-profiling
 double ac3_rule_times[100];
+int ac3_rule_hit_counts[100];
 int ac3_current_rule_id = -1;
 double ac3_t_start = 0;
 
@@ -1895,7 +1902,10 @@ EMSCRIPTEN_KEEPALIVE int get_ac3_rule_count() {
     return 11;
 }
 EMSCRIPTEN_KEEPALIVE void reset_ac3_rule_times() {
-    for (int i = 0; i < 100; i++) ac3_rule_times[i] = 0;
+    for (int i = 0; i < 100; i++) {
+        ac3_rule_times[i] = 0;
+        ac3_rule_hit_counts[i] = 0;
+    }
 }
 
 // プロファイリング（内部時間計測）のON/OFFスイッチ
@@ -3847,9 +3857,31 @@ static bool checkSolvability(const char* difficulty) {
     return (result == 1);
 }
 
+// 判定用関数：Epic Criteria（高度なアルゴリズムが使われたか）
+static bool checkEpicCriteria(const char* difficulty) {
+    static int8_t backupEdges[MAX_EDGES];
+    memcpy(backupEdges, edgeStates, numEdges);
+    memset(edgeStates, 0, numEdges);
+
+    reset_ac3_rule_times();
+    
+    // Check solvability with the specific difficulty setting
+    bool solvable = checkSolvability(difficulty);
+    
+    bool usedGF2 = (ac3_rule_hit_counts[5] > 0); // 5: GF2
+    bool usedJordan = (ac3_rule_hit_counts[6] > 0); // 6: Jordan Curve
+    bool usedNoEarlyClose = (ac3_rule_hit_counts[9] > 0); // 9: ループの早期閉路禁止
+    bool usedBridge = (ac3_rule_hit_counts[10] > 0); // 10: 全体連結性(Bridge)
+    
+    // 全ての高度な大域定理が「新しいエッジを確定させた」場合にのみOKとする（真の全部乗せ）
+    bool meetsCriteria = (usedGF2 && usedJordan && usedNoEarlyClose && usedBridge);
+    
+    memcpy(edgeStates, backupEdges, numEdges);
+    return meetsCriteria && solvable;
+}
+
 // FULL MINIMIZATION ENGINE IN C (TOP-DOWN & SYMMETRIC)
-EMSCRIPTEN_KEEPALIVE
-void generate_puzzle_wasm(const char* difficulty) {
+static void generate_puzzle_wasm_internal(const char* difficulty) {
     debugTimeoutCount = 0;
     debugContradictionCount = 0;
     lookaheadEdgeTests = 0;
@@ -4159,6 +4191,55 @@ void generate_puzzle_wasm(const char* difficulty) {
     // Finalize: Restore the original target solved loop into edgeStates
     memcpy(edgeStates, targetEdgeStates, numEdges);
     memset(genCells, 0, sizeof(genCells));
+}
+
+EMSCRIPTEN_KEEPALIVE
+void generate_puzzle_wasm(const char* difficulty) {
+    bool isMasterOrHard = (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0 ||
+                           strcmp(difficulty, "Hard") == 0 || strcmp(difficulty, "hard") == 0);
+    
+    int maxEpicAttempts = isMasterOrHard ? 5 : 1; // 5回までチャレンジ
+    bool epicMet = false;
+    int attempt = 0;
+    
+    static int8_t bestEdges[MAX_EDGES];
+    static int8_t bestClues[MAX_CELLS];
+    int bestHitCount = -1;
+    
+    while (!epicMet && attempt < maxEpicAttempts) {
+        attempt++;
+        if (attempt > 1) {
+            printf("[C Generator] Epic Criteria Failed. Retrying... (Attempt %d/%d)\n", attempt, maxEpicAttempts);
+        }
+        
+        generate_puzzle_wasm_internal(difficulty);
+        
+        if (!isMasterOrHard) {
+            epicMet = true;
+            break;
+        }
+        
+        epicMet = checkEpicCriteria(difficulty);
+        
+        // フォールバック用に、一番「高度な推論が使われた種類数」を保存しておく
+        int currentHitScore = (ac3_rule_hit_counts[5] > 0 ? 1 : 0) + 
+                              (ac3_rule_hit_counts[6] > 0 ? 1 : 0) + 
+                              (ac3_rule_hit_counts[9] > 0 ? 1 : 0) + 
+                              (ac3_rule_hit_counts[10] > 0 ? 1 : 0);
+        if (currentHitScore > bestHitCount) {
+            bestHitCount = currentHitScore;
+            memcpy(bestEdges, edgeStates, numEdges);
+            for(int i=0; i<rows*cols; i++) bestClues[i] = clues[i];
+        }
+    }
+    
+    if (!epicMet && isMasterOrHard) {
+        printf("[C Generator] Reached max epic attempts. Falling back to the best one found (Score: %d).\n", bestHitCount);
+        memcpy(edgeStates, bestEdges, numEdges);
+        for(int i=0; i<rows*cols; i++) clues[i] = bestClues[i];
+    } else if (isMasterOrHard) {
+        printf("[C Generator] Epic puzzle successfully generated on attempt %d!\n", attempt);
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
