@@ -98,9 +98,9 @@ static int8_t backupStack[MAX_BACKTRACK_DEPTH][MAX_EDGES];
 static int8_t backupAfterDeductStack[MAX_BACKTRACK_DEPTH][MAX_EDGES];
 
 extern int ac3_current_rule_id;
-extern int ac3_rule_hit_counts[100];
+extern int ac3_rule_hit_counts[256];
 #define RECORD_AC3_HIT() do { \
-    if (ac3_current_rule_id >= 0) ac3_rule_hit_counts[ac3_current_rule_id]++; \
+    if (ac3_current_rule_id >= 0 && ac3_current_rule_id < 256) ac3_rule_hit_counts[ac3_current_rule_id]++; \
 } while(0)
 
 // Graph adjacency list arrays for loop connection tracing (avoids allocations)
@@ -315,6 +315,18 @@ const char* deduction_rule_names[MAX_EDGES * 2];
 int deduction_history_count = 0;
 const char* current_rule_name = "未分類";
 
+// --- Deduction Logging for Analysis ---
+typedef struct {
+    int edgeIdx;
+    int ruleId;
+    int depth; // lookahead depth (0 for base logic)
+} DeductionLog;
+
+DeductionLog deduction_logs[MAX_EDGES * 2];
+int deduction_log_count = 0;
+bool enable_deduction_logging = false;
+int current_lookahead_depth = 0;
+
 EMSCRIPTEN_KEEPALIVE
 int get_first_deduced_edge() {
     if (deduction_history_count > 0) {
@@ -381,8 +393,19 @@ static inline bool setEdgeState(int edgeIdx, int8_t state) {
     if (edgeStates[edgeIdx] == state) return true; // Already set to this state
     if (edgeStates[edgeIdx] != 0) return false;    // Contradiction: edge is already determined to a different state
     
+    if (isDoingLookahead && lookaheadMaxLimit > 0 && lookaheadConfirmedCount >= lookaheadMaxLimit) {
+        return true; // Limit reached: treat as success but do NOT change state to avoid wasteful AC-3 propagation
+    }
+    
     edgeStates[edgeIdx] = state;
     RECORD_AC3_HIT();
+    
+    if (enable_deduction_logging && !isDoingLookahead && deduction_log_count < MAX_EDGES * 2) {
+        deduction_logs[deduction_log_count].edgeIdx = edgeIdx;
+        deduction_logs[deduction_log_count].ruleId = ac3_current_rule_id;
+        deduction_logs[deduction_log_count].depth = 0;
+        deduction_log_count++;
+    }
     
     if (deduction_history_count < MAX_EDGES * 2) {
         deduction_rule_names[deduction_history_count] = current_rule_name;
@@ -390,9 +413,7 @@ static inline bool setEdgeState(int edgeIdx, int8_t state) {
     }
 
     gf2_update_queue[gf2_queue_tail++] = edgeIdx;
-    if (isDoingLookahead && lookaheadMaxLimit > 0 && lookaheadConfirmedCount >= lookaheadMaxLimit) {
-        return true; // Limit reached: treat as success (no contradiction yet)
-    }
+    
     if (isDoingLookahead && lookaheadMaxLimit > 0) {
         lookaheadConfirmedCount++;
     }
@@ -1380,11 +1401,13 @@ bool applyStaticRules_internal() {
     extern bool restrictLogicToLocal;
     if (!restrictLogicToLocal) {
         double t_lut_start = emscripten_get_now();
-        current_rule_name = "定石: パターン辞書(LUT)の一致";
-        if (!applyLUT()) return false;
-        
-        current_rule_name = "定石: 境界・角パターン辞書(LUT)の一致";
-        if (!applyBoundaryLUTs()) return false;
+        if (!enable_deduction_logging) {
+            current_rule_name = "定石: パターン辞書(LUT)の一致";
+            if (!applyLUT()) return false;
+            
+            current_rule_name = "定石: 境界・角パターン辞書(LUT)の一致";
+            if (!applyBoundaryLUTs()) return false;
+        }
         perf_lut += emscripten_get_now() - t_lut_start;
         
         int afterLUT = 0;
@@ -1421,6 +1444,134 @@ static inline bool areEdgesForcedEqual(int e1, int e2, int dotR, int dotC) {
         return true;
     }
     return false;
+}
+
+static bool applyVirtualPathLogic() {
+    bool changed = false;
+    
+    int forbiddenA[400];
+    int forbiddenB[400];
+    int forbiddenE1[400];
+    int forbiddenE2[400];
+    int forbiddenCount = 0;
+    
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int clue = clues[r * cols + c];
+            if (clue == -1) continue;
+            
+            int edges[4];
+            edges[0] = getHEdgeIndex(r, c);       // Top
+            edges[1] = getHEdgeIndex(r + 1, c);   // Bottom
+            edges[2] = getVEdgeIndex(r, c);       // Left
+            edges[3] = getVEdgeIndex(r, c + 1);   // Right
+            
+            int lines = 0, crosses = 0;
+            int undecided[4];
+            int undecidedCount = 0;
+            
+            for (int i = 0; i < 4; i++) {
+                if (edges[i] == -1) continue; 
+                if (edgeStates[edges[i]] == 1) lines++;
+                else if (edgeStates[edges[i]] == -1) crosses++;
+                else undecided[undecidedCount++] = edges[i];
+            }
+            
+            if (lines + 1 == clue && undecidedCount == 2) {
+                int e1 = undecided[0];
+                int e2 = undecided[1];
+                
+                int u1, v1, u2, v2;
+                if (e1 < numH) {
+                    u1 = (e1 / cols) * (cols + 1) + (e1 % cols); v1 = u1 + 1;
+                } else {
+                    int vIdx = e1 - numH;
+                    u1 = (vIdx / (cols + 1)) * (cols + 1) + (vIdx % (cols + 1)); v1 = u1 + (cols + 1);
+                }
+                if (e2 < numH) {
+                    u2 = (e2 / cols) * (cols + 1) + (e2 % cols); v2 = u2 + 1;
+                } else {
+                    int vIdx = e2 - numH;
+                    u2 = (vIdx / (cols + 1)) * (cols + 1) + (vIdx % (cols + 1)); v2 = u2 + (cols + 1);
+                }
+                
+                int shared_dot = -1, other1 = -1, other2 = -1;
+                if (u1 == u2) { shared_dot = u1; other1 = v1; other2 = v2; }
+                else if (u1 == v2) { shared_dot = u1; other1 = v1; other2 = u2; }
+                else if (v1 == u2) { shared_dot = v1; other1 = u1; other2 = v2; }
+                else if (v1 == v2) { shared_dot = v1; other1 = u1; other2 = u2; }
+                
+                if (shared_dot != -1) {
+                    if (dsuFind(other1) == dsuFind(other2)) {
+                        int compA = dsuFind(other1);
+                        int compB = dsuFind(shared_dot);
+                        if (compA == compB) {
+                            return false; 
+                        } else {
+                            forbiddenA[forbiddenCount] = compA;
+                            forbiddenB[forbiddenCount] = compB;
+                            forbiddenE1[forbiddenCount] = e1;
+                            forbiddenE2[forbiddenCount] = e2;
+                            forbiddenCount++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if (forbiddenCount > 0) {
+        for (int k = 0; k < numEdges; k++) {
+            if (edgeStates[k] == 0) {
+                int uk, vk;
+                if (k < numH) {
+                    uk = (k / cols) * (cols + 1) + (k % cols); vk = uk + 1;
+                } else {
+                    int vIdx = k - numH;
+                    uk = (vIdx / (cols + 1)) * (cols + 1) + (vIdx % (cols + 1)); vk = uk + (cols + 1);
+                }
+                int compU = dsuFind(uk);
+                int compV = dsuFind(vk);
+                
+                for (int i = 0; i < forbiddenCount; i++) {
+                    if (k == forbiddenE1[i] || k == forbiddenE2[i]) continue;
+                    
+                    int fA = forbiddenA[i];
+                    int fB = forbiddenB[i];
+                    if ((compU == fA && compV == fB) || (compU == fB && compV == fA)) {
+                        // Check if it's the valid final loop before banning
+                        edgeStates[k] = 1;
+                        edgeStates[forbiddenE1[i]] = 1;
+                        edgeStates[forbiddenE2[i]] = -1;
+                        bool solved1 = isSolved();
+                        
+                        edgeStates[forbiddenE1[i]] = -1;
+                        edgeStates[forbiddenE2[i]] = 1;
+                        bool solved2 = isSolved();
+                        
+                        edgeStates[k] = 0;
+                        edgeStates[forbiddenE1[i]] = 0;
+                        edgeStates[forbiddenE2[i]] = 0;
+                        
+                        if (!solved1 && !solved2) {
+                            if (!setEdgeState(k, -1)) return false;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if (changed) {
+        for(int r=0; r<rows; r++) {
+            for(int c=0; c<cols; c++) cellStack[cellStackTop++] = r * cols + c;
+        }
+        for(int r=0; r<=rows; r++) {
+            for(int c=0; c<=cols; c++) dotStack[dotStackTop++] = r * (cols + 1) + c;
+        }
+    }
+    return true;
 }
 
 static bool applyAdvanced2Rules() {
@@ -1596,36 +1747,99 @@ static bool deductJordanCurveParity() {
 static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
     int curr_r = startR;
     int curr_c = startC;
-    while (getClue(curr_r, curr_c) == 2) {
-        curr_r += dr;
-        curr_c += dc;
-    }
-    int clue = getClue(curr_r, curr_c);
-    if (clue != -1) {
-        
-        int oppEdge1 = -1, oppEdge2 = -1;
-        if (dr == 1 && dc == 1) { 
-            oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
-            oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
-        } else if (dr == -1 && dc == -1) { 
-            oppEdge1 = getHEdgeIndex(curr_r, curr_c);
-            oppEdge2 = getVEdgeIndex(curr_r, curr_c);
-        } else if (dr == -1 && dc == 1) { 
-            oppEdge1 = getHEdgeIndex(curr_r, curr_c);
-            oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
-        } else if (dr == 1 && dc == -1) { 
-            oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
-            oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+    
+    while (true) {
+        // 1. 手前側の角(XORが到達した角)のエッジを取得する
+        int inEdge1 = numEdges, inEdge2 = numEdges;
+        if (dr == 1 && dc == 1) { // 進行方向が右下 -> 手前は左上
+            inEdge1 = getHEdgeIndex(curr_r, curr_c);
+            inEdge2 = getVEdgeIndex(curr_r, curr_c);
+        } else if (dr == -1 && dc == -1) { // 左上へ -> 手前は右下
+            inEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+            inEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+        } else if (dr == -1 && dc == 1) { // 右上へ -> 手前は左下
+            inEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+            inEdge2 = getVEdgeIndex(curr_r, curr_c);
+        } else if (dr == 1 && dc == -1) { // 左下へ -> 手前は右上
+            inEdge1 = getHEdgeIndex(curr_r, curr_c);
+            inEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
         }
         
-        if (clue == 0) {
+        // 2. XOR制約の伝搬 (到達した角は「1本貫通」状態のはずなので、片方が確定していればもう一方を確定)
+        if (inEdge1 != numEdges && inEdge2 != numEdges) {
+            if (edgeStates[inEdge1] == 1) { if (!setEdgeState(inEdge2, -1)) return false; }
+            if (edgeStates[inEdge1] == -1) { if (!setEdgeState(inEdge2, 1)) return false; }
+            if (edgeStates[inEdge2] == 1) { if (!setEdgeState(inEdge1, -1)) return false; }
+            if (edgeStates[inEdge2] == -1) { if (!setEdgeState(inEdge1, 1)) return false; }
+        } else if (inEdge1 != numEdges && inEdge2 == numEdges) {
+            // 盤面の端で片方のエッジしか存在しない場合、もう一方は必ず線になる
+            if (!setEdgeState(inEdge1, 1)) return false;
+        } else if (inEdge1 == numEdges && inEdge2 != numEdges) {
+            // 盤面の端で片方のエッジしか存在しない場合、もう一方は必ず線になる
+            if (!setEdgeState(inEdge2, 1)) return false;
+        } else {
+            // 完全に盤面外（四隅の外）なら矛盾
             return false;
-        } else if (clue == 1) {
-            if (!setEdgeState(oppEdge1, -1)) return false;
-            if (!setEdgeState(oppEdge2, -1)) return false;
-        } else if (clue == 3) {
-            if (!setEdgeState(oppEdge1, 1)) return false;
-            if (!setEdgeState(oppEdge2, 1)) return false;
+        }
+        
+        if (curr_r < 0 || curr_r >= rows || curr_c < 0 || curr_c >= cols) break;
+        
+        int clue = getClue(curr_r, curr_c);
+        
+        if (clue == 2) {
+            // 2のセルの場合、対角の角もXOR状態となり、次のセルへ伝搬する
+            int oppEdge1 = -1, oppEdge2 = -1;
+            if (dr == 1 && dc == 1) { 
+                oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+            } else if (dr == -1 && dc == -1) { 
+                oppEdge1 = getHEdgeIndex(curr_r, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+            } else if (dr == -1 && dc == 1) { 
+                oppEdge1 = getHEdgeIndex(curr_r, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+            } else if (dr == 1 && dc == -1) { 
+                oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+            }
+
+            if (oppEdge1 != -1 && oppEdge2 != -1) {
+                if (edgeStates[oppEdge1] == 1) { if (!setEdgeState(oppEdge2, -1)) return false; }
+                if (edgeStates[oppEdge1] == -1) { if (!setEdgeState(oppEdge2, 1)) return false; }
+                if (edgeStates[oppEdge2] == 1) { if (!setEdgeState(oppEdge1, -1)) return false; }
+                if (edgeStates[oppEdge2] == -1) { if (!setEdgeState(oppEdge1, 1)) return false; }
+            }
+
+            curr_r += dr;
+            curr_c += dc;
+        } else {
+            // 2以外のセルに到達した場合、伝搬はここで終了。
+            // さらに奥側の角に対する特殊な推論（1や3の場合）を行う。
+            int oppEdge1 = -1, oppEdge2 = -1;
+            if (dr == 1 && dc == 1) { 
+                oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+            } else if (dr == -1 && dc == -1) { 
+                oppEdge1 = getHEdgeIndex(curr_r, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+            } else if (dr == -1 && dc == 1) { 
+                oppEdge1 = getHEdgeIndex(curr_r, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
+            } else if (dr == 1 && dc == -1) { 
+                oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
+                oppEdge2 = getVEdgeIndex(curr_r, curr_c);
+            }
+            
+            if (clue == 0) {
+                return false; // 手前角にXOR(線1本入る)が確定しているのに0セルは矛盾
+            } else if (clue == 1) {
+                if (oppEdge1 != -1 && !setEdgeState(oppEdge1, -1)) return false;
+                if (oppEdge2 != -1 && !setEdgeState(oppEdge2, -1)) return false;
+            } else if (clue == 3) {
+                if (oppEdge1 != -1 && !setEdgeState(oppEdge1, 1)) return false;
+                if (oppEdge2 != -1 && !setEdgeState(oppEdge2, 1)) return false;
+            }
+            break;
         }
     }
     return true;
@@ -1871,57 +2085,87 @@ static inline bool runUniversalParityCheck() {
 // Removed old O(V^3) runGF2Solver
 
 
+// Difficulty Levels
+#define DIFF_BASIC     1
+#define DIFF_EASY      2
+#define DIFF_MEDIUM    3
+#define DIFF_HARD      4
+#define DIFF_GLOBAL_1  5
+#define DIFF_GLOBAL_2  8
+#define DIFF_LOOKAHEAD 10
+
 // AC3 Sub-profiling
-double ac3_rule_times[100];
-int ac3_rule_hit_counts[100];
+double ac3_rule_times[256];
+int ac3_rule_hit_counts[256];
 int ac3_current_rule_id = -1;
 double ac3_t_start = 0;
+int ac3_current_difficulty_limit = 10;
 
 EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
-    static const char* names[] = {
-        "角制約: 2や3の角の処理",
-        "セル制約: 数字と線の数が合わない",
-        "角制約: 3の角から伸びる線",
-        "交点制約: 線は交差・分岐しない",
-        "交点制約: 角の処理(1の斜め等)",
-        "全体制約: 連立方程式(GF2)の更新",
-        "全体制約: 内外判定(Jordan Curve)",
-        "全体制約: 高度な2の制約",
-        "全体制約: 2の角のペア制約",
-        "全体制約: ループの早期閉路禁止",
-        "全体制約: 全体連結性(Bridge)"
-    };
-    if (idx < 0 || idx >= 11) return NULL;
-    return names[idx];
+    switch (idx) {
+        case 101: return "Basic (Cell Clue)";
+        case 102: return "Basic (Dot Line Limit)";
+        case 103: return "Basic (Dot Constraint)";
+        case 111: return "Easy (Corner 0)";
+        case 112: return "Easy (Corner 3)";
+        case 113: return "Easy (Adjacent 3s)";
+        case 115: return "Medium (Clue 2 Diagonal Entry)";
+        case 121: return "Medium (Corner 2)";
+        case 122: return "Medium (Diagonal 1)";
+        case 123: return "Medium (Diagonal 3)";
+        case 124: return "Medium (Universal SLE)";
+        case 125: return "Medium (General 2 XOR)";
+        case 131: return "Hard (Corner 3 Ext)";
+        case 132: return "Hard (Corner 2 Pair)";
+        case 133: return "Hard (Advanced 2)";
+        case 134: return "Hard (Line entering 3)";
+        case 135: return "Hard (Line entering 1)";
+        case 136: return "Hard (Clue 2 Early SLE)";
+        case 137: return "Hard (2 and 3 Diagonal)";
+        case 138: return "Hard (Dot Border Theorem)";
+        case 140: return "Hard (Diag 2-3 Outer X/Line)";
+        case 141: return "Global (Early Closed Loop)";
+        case 142: return "Global (Jordan Curve)";
+        case 143: return "Global (Virtual Path Loop Prevention)";
+        case 151: return "Global (GF2 Parity)";
+        case 152: return "Global (Bridge Connectivity)";
+        case 161: return "Extreme (LUT Deduction)";
+        case 200: return "Lookahead (Depth)";
+        default: return "";
+    }
 }
 EMSCRIPTEN_KEEPALIVE double get_ac3_rule_time(int idx) {
-    if (idx < 0 || idx >= 11) return 0;
+    if (idx < 0 || idx >= 256) return 0;
     return ac3_rule_times[idx];
 }
-EMSCRIPTEN_KEEPALIVE int get_ac3_rule_count() {
-    return 11;
+EMSCRIPTEN_KEEPALIVE int get_ac3_rule_hit_count(int idx) {
+    if (idx < 0 || idx >= 256) return 0;
+    return ac3_rule_hit_counts[idx];
 }
+EMSCRIPTEN_KEEPALIVE int get_ac3_rule_count() { return 256; }
 EMSCRIPTEN_KEEPALIVE void reset_ac3_rule_times() {
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 256; i++) {
         ac3_rule_times[i] = 0;
         ac3_rule_hit_counts[i] = 0;
     }
 }
 
-// プロファイリング（内部時間計測）のON/OFFスイッチ
-// 0にすると RECORD_AC3_TIME が空になり、ゼロオーバーヘッドで実行されます
 #define ENABLE_PROFILING 0
 
 #if ENABLE_PROFILING
 #define RECORD_AC3_TIME(new_id) do { \
     double _t = emscripten_get_now(); \
-    if (ac3_current_rule_id >= 0) ac3_rule_times[ac3_current_rule_id] += (_t - ac3_t_start); \
+    if (ac3_current_rule_id >= 0 && ac3_current_rule_id < 256) ac3_rule_times[ac3_current_rule_id] += (_t - ac3_t_start); \
     ac3_t_start = _t; \
     ac3_current_rule_id = (new_id); \
+    const char* _n = get_ac3_rule_name(new_id); \
+    if (_n[0] != '\0') current_rule_name = _n; \
 } while(0)
 #else
 #define RECORD_AC3_TIME(new_id) do { \
     ac3_current_rule_id = (new_id); \
+    const char* _n = get_ac3_rule_name(new_id); \
+    if (_n[0] != '\0') current_rule_name = _n; \
 } while(0)
 #endif
 
@@ -1940,6 +2184,11 @@ static inline bool deductIncremental_internal() {
             AC3_RETURN_FALSE; // Force stop
         }
         while (cellStackTop > 0 || dotStackTop > 0) {
+            if (isDoingLookahead && lookaheadMaxLimit > 0 && lookaheadConfirmedCount >= lookaheadMaxLimit) {
+                cellStackTop = 0;
+                dotStackTop = 0;
+                AC3_RETURN_TRUE;
+            }
             // 1. Process cells
             int cellIdx = popCell();
             if (cellIdx != -1) {
@@ -1950,47 +2199,48 @@ static inline bool deductIncremental_internal() {
                 int c = cellIdx % cols;
                 int clue = clues[cellIdx];
                 if (clue != -1) {
-                    current_rule_name = "角制約: 2や3の角の処理"; RECORD_AC3_TIME(0);
-                    if (!check23CornerLogic(r, c)) AC3_RETURN_FALSE;
-                    if (!check22CornerLogic(r, c)) AC3_RETURN_FALSE;
+                    if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
+                        RECORD_AC3_TIME(121);
+                        if (!check23CornerLogic(r, c)) AC3_RETURN_FALSE;
+                        if (!check22CornerLogic(r, c)) AC3_RETURN_FALSE;
+                    }
                     
-                    current_rule_name = "セル制約: 数字と線の数が合わない"; RECORD_AC3_TIME(1);
                     int cellEdges[4];
                     getCellEdges(r, c, cellEdges);
-                    int lines = 0;
-                    int crosses = 0;
-                    int undecided[4];
-                    int undecidedCount = 0;
                     
-                    for (int j = 0; j < 4; j++) {
-                        int idx = cellEdges[j];
-                        if (edgeStates[idx] == 1) lines++;
-                        else if (edgeStates[idx] == -1) crosses++;
-                        else undecided[undecidedCount++] = idx;
-                    }
-                    
-                    if (lines > clue || crosses > (4 - clue)) {
-                        AC3_RETURN_FALSE; // Contradiction
-                    }
-                    
-                    if (undecidedCount > 0) {
-                        if (lines == clue) {
-                            for (int j = 0; j < undecidedCount; j++) {
-                                if (!setEdgeState(undecided[j], -1)) {
-                                    AC3_RETURN_FALSE;
+                    if (ac3_current_difficulty_limit >= DIFF_BASIC) {
+                        RECORD_AC3_TIME(101);
+                        int lines = 0;
+                        int crosses = 0;
+                        int undecided[4];
+                        int undecidedCount = 0;
+                        
+                        for (int j = 0; j < 4; j++) {
+                            int idx = cellEdges[j];
+                            if (edgeStates[idx] == 1) lines++;
+                            else if (edgeStates[idx] == -1) crosses++;
+                            else undecided[undecidedCount++] = idx;
+                        }
+                        
+                        if (lines > clue || crosses > (4 - clue)) {
+                            AC3_RETURN_FALSE; // Contradiction
+                        }
+                        
+                        if (undecidedCount > 0) {
+                            if (lines == clue) {
+                                for (int j = 0; j < undecidedCount; j++) {
+                                    if (!setEdgeState(undecided[j], -1)) AC3_RETURN_FALSE;
                                 }
-                            }
-                        } else if (crosses == (4 - clue)) {
-                            for (int j = 0; j < undecidedCount; j++) {
-                                if (!setEdgeState(undecided[j], 1)) {
-                                    AC3_RETURN_FALSE;
+                            } else if (crosses == (4 - clue)) {
+                                for (int j = 0; j < undecidedCount; j++) {
+                                    if (!setEdgeState(undecided[j], 1)) AC3_RETURN_FALSE;
                                 }
                             }
                         }
                     }
                     
-                    if (clue == 3) {
-                        current_rule_name = "角制約: 3の角から伸びる線"; RECORD_AC3_TIME(2);
+                    if (clue == 3 && ac3_current_difficulty_limit >= DIFF_HARD) {
+                        RECORD_AC3_TIME(131);
                         int eT = cellEdges[0];
                         int eR = cellEdges[1];
                         int eB = cellEdges[2];
@@ -2019,7 +2269,8 @@ static inline bool deductIncremental_internal() {
                         if (status & 1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
                         if (status & 2) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
 
-                    } else if (clue == 1) {
+                    } else if (clue == 1 && ac3_current_difficulty_limit >= DIFF_MEDIUM) {
+                        RECORD_AC3_TIME(122);
                         int eT = cellEdges[0];
                         int eR = cellEdges[1];
                         int eB = cellEdges[2];
@@ -2053,7 +2304,73 @@ static inline bool deductIncremental_internal() {
                         int eR = cellEdges[1];
                         int eB = cellEdges[2];
                         int eL = cellEdges[3];
-                        // Early SLE for Clue 2 (User's observation)
+                        
+                        if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
+                            int stT = edgeStates[eT];
+                            int stR = edgeStates[eR];
+                            int stB = edgeStates[eB];
+                            int stL = edgeStates[eL];
+                            // General 2-cell XOR Propagation
+                            // Check internal edges
+                            if (stT != 0 && stL != 0 && stT != stL) { // Top-Left is XOR
+                                RECORD_AC3_TIME(125);
+                                if (stB == 1) { if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                                if (stB == -1) { if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
+                                if (stR == 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; }
+                                if (stR == -1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; }
+                            }
+                            if (stB != 0 && stR != 0 && stB != stR) { // Bottom-Right is XOR
+                                RECORD_AC3_TIME(125);
+                                if (stT == 1) { if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                                if (stT == -1) { if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
+                                if (stL == 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; }
+                                if (stL == -1) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; }
+                            }
+                            if (stT != 0 && stR != 0 && stT != stR) { // Top-Right is XOR
+                                RECORD_AC3_TIME(125);
+                                if (stB == 1) { if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE; }
+                                if (stB == -1) { if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
+                                if (stL == 1) { if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE; }
+                                if (stL == -1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; }
+                            }
+                            if (stB != 0 && stL != 0 && stB != stL) { // Bottom-Left is XOR
+                                RECORD_AC3_TIME(125);
+                                if (stT == 1) { if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE; }
+                                if (stT == -1) { if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
+                                if (stR == 1) { if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE; }
+                                if (stR == -1) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; }
+                            }
+
+                            // Check outside edges (incoming line to a corner of 2)
+                            int outT_L = getHEdgeIndex(r, c - 1);
+                            int outL_T = getVEdgeIndex(r - 1, c);
+                            if (outT_L != numEdges && outL_T != numEdges && edgeStates[outT_L] != 0 && edgeStates[outL_T] != 0 && edgeStates[outT_L] != edgeStates[outL_T]) {
+                                RECORD_AC3_TIME(125);
+                                if (!propagateDiagonal2s(r, c, 1, 1)) AC3_RETURN_FALSE;
+                            }
+                            int outT_R = getHEdgeIndex(r, c + 1);
+                            int outR_T = getVEdgeIndex(r - 1, c + 1);
+                            if (outT_R != numEdges && outR_T != numEdges && edgeStates[outT_R] != 0 && edgeStates[outR_T] != 0 && edgeStates[outT_R] != edgeStates[outR_T]) {
+                                RECORD_AC3_TIME(125);
+                                if (!propagateDiagonal2s(r, c, 1, -1)) AC3_RETURN_FALSE;
+                            }
+                            int outB_L = getHEdgeIndex(r + 1, c - 1);
+                            int outL_B = getVEdgeIndex(r + 1, c);
+                            if (outB_L != numEdges && outL_B != numEdges && edgeStates[outB_L] != 0 && edgeStates[outL_B] != 0 && edgeStates[outB_L] != edgeStates[outL_B]) {
+                                RECORD_AC3_TIME(125);
+                                if (!propagateDiagonal2s(r, c, -1, 1)) AC3_RETURN_FALSE;
+                            }
+                            int outB_R = getHEdgeIndex(r + 1, c + 1);
+                            int outR_B = getVEdgeIndex(r + 1, c + 1);
+                            if (outB_R != numEdges && outR_B != numEdges && edgeStates[outB_R] != 0 && edgeStates[outR_B] != 0 && edgeStates[outB_R] != edgeStates[outR_B]) {
+                                RECORD_AC3_TIME(125);
+                                if (!propagateDiagonal2s(r, c, -1, -1)) AC3_RETURN_FALSE;
+                            }
+                        }
+
+                        if (ac3_current_difficulty_limit >= DIFF_HARD) {
+                            RECORD_AC3_TIME(136);
+                            // Early SLE for Clue 2 (User's observation)
                         // Top-Left Dot Outside Edges: H(r, c-1) and V(r-1, c)
                         int outT_L = getHEdgeIndex(r, c - 1);
                         int outL_T = getVEdgeIndex(r - 1, c);
@@ -2084,8 +2401,58 @@ static inline bool deductIncremental_internal() {
                         }
                     }
                     
+                    if (ac3_current_difficulty_limit >= 2) {
+                            // "2の対角両端に進入する線がある場合、もう片方の外側エッジは×になる"
+                            int outT_L = getHEdgeIndex(r, c - 1);
+                            int outL_T = getVEdgeIndex(r - 1, c);
+                            int outB_R = getHEdgeIndex(r + 1, c + 1);
+                            int outR_B = getVEdgeIndex(r + 1, c + 1);
+                            
+                            if ((edgeStates[outT_L] == 1 || edgeStates[outL_T] == 1) &&
+                                (edgeStates[outB_R] == 1 || edgeStates[outR_B] == 1)) {
+                                
+                                int prev_rule_id = ac3_current_rule_id;
+                                const char* prev_rule_name = current_rule_name;
+                                current_rule_name = "Medium (Clue 2 Diagonal Entry)";
+                                ac3_current_rule_id = 115;
+                                
+                                if (edgeStates[outT_L] == 1) { if (!setEdgeState(outL_T, -1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[outL_T] == 1) { if (!setEdgeState(outT_L, -1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[outB_R] == 1) { if (!setEdgeState(outR_B, -1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[outR_B] == 1) { if (!setEdgeState(outB_R, -1)) AC3_RETURN_FALSE; }
+                                
+                                ac3_current_rule_id = prev_rule_id;
+                                current_rule_name = prev_rule_name;
+                            }
+                            
+                            int outT_R = getHEdgeIndex(r, c + 1);
+                            int outR_T = getVEdgeIndex(r - 1, c + 1);
+                            int outB_L = getHEdgeIndex(r + 1, c - 1);
+                            int outL_B = getVEdgeIndex(r + 1, c);
+                            
+                            if ((edgeStates[outT_R] == 1 || edgeStates[outR_T] == 1) &&
+                                (edgeStates[outB_L] == 1 || edgeStates[outL_B] == 1)) {
+                                
+                                int prev_rule_id = ac3_current_rule_id;
+                                const char* prev_rule_name = current_rule_name;
+                                current_rule_name = "Medium (Clue 2 Diagonal Entry)";
+                                ac3_current_rule_id = 115;
+                                
+                                if (edgeStates[outT_R] == 1) { if (!setEdgeState(outR_T, -1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[outR_T] == 1) { if (!setEdgeState(outT_R, -1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[outB_L] == 1) { if (!setEdgeState(outL_B, -1)) AC3_RETURN_FALSE; }
+                                if (edgeStates[outL_B] == 1) { if (!setEdgeState(outB_L, -1)) AC3_RETURN_FALSE; }
+                                
+                                ac3_current_rule_id = prev_rule_id;
+                                current_rule_name = prev_rule_name;
+                            }
+                        }
+                    }
+                    
                     // Universal SLE Propagation
-                    // If any corner has exactly 1 line and 1 cross, it shoots an SLE diagonally.
+                    if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
+                        RECORD_AC3_TIME(124);
+                        // If any corner has exactly 1 line and 1 cross, it shoots an SLE diagonally.
                     int eT = cellEdges[0];
                     int eR = cellEdges[1];
                     int eB = cellEdges[2];
@@ -2114,59 +2481,134 @@ static inline bool deductIncremental_internal() {
                             if (!propagateDiagonal2s(r - 1, c - 1, -1, -1)) AC3_RETURN_FALSE;
                         }
                     }
-                    
+                    }
                     if (clue == 2) {
-                        // "2 and 3 diagonally adjacent with an external cross" deduction rule
-                        // Bottom-Right
-                        if (r + 1 < rows && c + 1 < cols && clues[(r + 1) * cols + (c + 1)] == 3) {
-                            int tA = getHEdgeIndex(r, c);
-                            int lA = getVEdgeIndex(r, c);
-                            if (edgeStates[tA] == -1 || edgeStates[lA] == -1) {
-                                if (edgeStates[tA] == -1) { if (!setEdgeState(lA, 1)) AC3_RETURN_FALSE; }
-                                if (edgeStates[lA] == -1) { if (!setEdgeState(tA, 1)) AC3_RETURN_FALSE; }
-                                int rB = getVEdgeIndex(r + 1, c + 2);
-                                int bB = getHEdgeIndex(r + 2, c + 1);
-                                if (!setEdgeState(rB, 1)) AC3_RETURN_FALSE;
-                                if (!setEdgeState(bB, 1)) AC3_RETURN_FALSE;
+                        if (ac3_current_difficulty_limit >= DIFF_HARD) {
+                            RECORD_AC3_TIME(140);
+                            int eT = cellEdges[0];
+                            int eR = cellEdges[1];
+                            int eB = cellEdges[2];
+                            int eL = cellEdges[3];
+                            // Check Top-Left diagonal for a 3
+                            if (r > 0 && c > 0 && clues[(r-1)*cols + (c-1)] == 3) {
+                                int outB_R = getHEdgeIndex(r+1, c+1);
+                                int outR_B = getVEdgeIndex(r+1, c+1);
+                                if (edgeStates[eB] == -1 || edgeStates[eR] == -1 || edgeStates[outB_R] == 1 || edgeStates[outR_B] == 1) {
+                                    if (edgeStates[eB] == -1) { if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[eR] == -1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outB_R] == 1) { if (!setEdgeState(outR_B, -1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outR_B] == 1) { if (!setEdgeState(outB_R, -1)) AC3_RETURN_FALSE; }
+                                    if (!setEdgeState(getHEdgeIndex(r-1, c-1), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r-1, c-1), 1)) AC3_RETURN_FALSE;
+                                }
+                            }
+                            // Check Top-Right diagonal for a 3
+                            if (r > 0 && c < cols - 1 && clues[(r-1)*cols + (c+1)] == 3) {
+                                int outB_L = getHEdgeIndex(r+1, c-1);
+                                int outL_B = getVEdgeIndex(r+1, c);
+                                if (edgeStates[eB] == -1 || edgeStates[eL] == -1 || edgeStates[outB_L] == 1 || edgeStates[outL_B] == 1) {
+                                    if (edgeStates[eB] == -1) { if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[eL] == -1) { if (!setEdgeState(eB, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outB_L] == 1) { if (!setEdgeState(outL_B, -1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outL_B] == 1) { if (!setEdgeState(outB_L, -1)) AC3_RETURN_FALSE; }
+                                    if (!setEdgeState(getHEdgeIndex(r-1, c+1), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r-1, c+2), 1)) AC3_RETURN_FALSE;
+                                }
+                            }
+                            // Check Bottom-Left diagonal for a 3
+                            if (r < rows - 1 && c > 0 && clues[(r+1)*cols + (c-1)] == 3) {
+                                int outT_R = getHEdgeIndex(r, c+1);
+                                int outR_T = getVEdgeIndex(r-1, c+1);
+                                if (edgeStates[eT] == -1 || edgeStates[eR] == -1 || edgeStates[outT_R] == 1 || edgeStates[outR_T] == 1) {
+                                    if (edgeStates[eT] == -1) { if (!setEdgeState(eR, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[eR] == -1) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outT_R] == 1) { if (!setEdgeState(outR_T, -1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outR_T] == 1) { if (!setEdgeState(outT_R, -1)) AC3_RETURN_FALSE; }
+                                    if (!setEdgeState(getHEdgeIndex(r+2, c-1), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r+1, c-1), 1)) AC3_RETURN_FALSE;
+                                }
+                            }
+                            // Check Bottom-Right diagonal for a 3
+                            if (r < rows - 1 && c < cols - 1 && clues[(r+1)*cols + (c+1)] == 3) {
+                                int outT_L = getHEdgeIndex(r, c-1);
+                                int outL_T = getVEdgeIndex(r-1, c);
+                                if (edgeStates[eT] == -1 || edgeStates[eL] == -1 || edgeStates[outT_L] == 1 || edgeStates[outL_T] == 1) {
+                                    if (edgeStates[eT] == -1) { if (!setEdgeState(eL, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[eL] == -1) { if (!setEdgeState(eT, 1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outT_L] == 1) { if (!setEdgeState(outL_T, -1)) AC3_RETURN_FALSE; }
+                                    if (edgeStates[outL_T] == 1) { if (!setEdgeState(outT_L, -1)) AC3_RETURN_FALSE; }
+                                    if (!setEdgeState(getHEdgeIndex(r+2, c+1), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r+1, c+2), 1)) AC3_RETURN_FALSE;
+                                }
                             }
                         }
-                        // Bottom-Left
-                        if (r + 1 < rows && c - 1 >= 0 && clues[(r + 1) * cols + (c - 1)] == 3) {
-                            int tB = getHEdgeIndex(r, c);
-                            int rB = getVEdgeIndex(r, c + 1);
-                            if (edgeStates[tB] == -1 || edgeStates[rB] == -1) {
-                                if (edgeStates[tB] == -1) { if (!setEdgeState(rB, 1)) AC3_RETURN_FALSE; }
-                                if (edgeStates[rB] == -1) { if (!setEdgeState(tB, 1)) AC3_RETURN_FALSE; }
-                                int lB = getVEdgeIndex(r + 1, c - 1);
-                                int bB = getHEdgeIndex(r + 2, c - 1);
-                                if (!setEdgeState(lB, 1)) AC3_RETURN_FALSE;
-                                if (!setEdgeState(bB, 1)) AC3_RETURN_FALSE;
+
+                        if (ac3_current_difficulty_limit >= DIFF_HARD) {
+                            RECORD_AC3_TIME(137);
+                            // "2-chain to 1 or 3 with an external cross" deduction rule
+                            
+                            // Top-Left Dot Outside Edges: H(r, c-1) and V(r-1, c)
+                            int outT_L = getHEdgeIndex(r, c - 1);
+                            int outL_T = getVEdgeIndex(r - 1, c);
+                            if (outT_L != numEdges && outL_T != numEdges && edgeStates[outT_L] == -1 && edgeStates[outL_T] == -1) {
+                                int curr_r = r + 1, curr_c = c + 1;
+                                while (getClue(curr_r, curr_c) == 2) { curr_r++; curr_c++; }
+                                int endClue = getClue(curr_r, curr_c);
+                                if (endClue == 1) {
+                                    if (!setEdgeState(getHEdgeIndex(curr_r, curr_c), -1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(curr_r, curr_c), -1)) AC3_RETURN_FALSE;
+                                } else if (endClue == 3) {
+                                    if (!setEdgeState(getHEdgeIndex(r, c), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r, c), 1)) AC3_RETURN_FALSE;
+                                }
                             }
-                        }
-                        // Top-Right
-                        if (r - 1 >= 0 && c + 1 < cols && clues[(r - 1) * cols + (c + 1)] == 3) {
-                            int bC = getHEdgeIndex(r + 1, c);
-                            int lC = getVEdgeIndex(r, c);
-                            if (edgeStates[bC] == -1 || edgeStates[lC] == -1) {
-                                if (edgeStates[bC] == -1) { if (!setEdgeState(lC, 1)) AC3_RETURN_FALSE; }
-                                if (edgeStates[lC] == -1) { if (!setEdgeState(bC, 1)) AC3_RETURN_FALSE; }
-                                int rC = getVEdgeIndex(r - 1, c + 2);
-                                int tC = getHEdgeIndex(r - 1, c + 1);
-                                if (!setEdgeState(rC, 1)) AC3_RETURN_FALSE;
-                                if (!setEdgeState(tC, 1)) AC3_RETURN_FALSE;
+                            
+                            // Top-Right Dot Outside Edges: H(r, c+1) and V(r-1, c+1)
+                            int outT_R = getHEdgeIndex(r, c + 1);
+                            int outR_T = getVEdgeIndex(r - 1, c + 1);
+                            if (outT_R != numEdges && outR_T != numEdges && edgeStates[outT_R] == -1 && edgeStates[outR_T] == -1) {
+                                int curr_r = r + 1, curr_c = c - 1;
+                                while (getClue(curr_r, curr_c) == 2) { curr_r++; curr_c--; }
+                                int endClue = getClue(curr_r, curr_c);
+                                if (endClue == 1) {
+                                    if (!setEdgeState(getHEdgeIndex(curr_r, curr_c), -1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(curr_r, curr_c + 1), -1)) AC3_RETURN_FALSE;
+                                } else if (endClue == 3) {
+                                    if (!setEdgeState(getHEdgeIndex(r, c), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r, c + 1), 1)) AC3_RETURN_FALSE;
+                                }
                             }
-                        }
-                        // Top-Left
-                        if (r - 1 >= 0 && c - 1 >= 0 && clues[(r - 1) * cols + (c - 1)] == 3) {
-                            int bD = getHEdgeIndex(r + 1, c);
-                            int rD = getVEdgeIndex(r, c + 1);
-                            if (edgeStates[bD] == -1 || edgeStates[rD] == -1) {
-                                if (edgeStates[bD] == -1) { if (!setEdgeState(rD, 1)) AC3_RETURN_FALSE; }
-                                if (edgeStates[rD] == -1) { if (!setEdgeState(bD, 1)) AC3_RETURN_FALSE; }
-                                int lD = getVEdgeIndex(r - 1, c - 1);
-                                int tD = getHEdgeIndex(r - 1, c - 1);
-                                if (!setEdgeState(lD, 1)) AC3_RETURN_FALSE;
-                                if (!setEdgeState(tD, 1)) AC3_RETURN_FALSE;
+                            
+                            // Bottom-Left Dot Outside Edges: H(r+1, c-1) and V(r+1, c)
+                            int outB_L = getHEdgeIndex(r + 1, c - 1);
+                            int outL_B = getVEdgeIndex(r + 1, c);
+                            if (outB_L != numEdges && outL_B != numEdges && edgeStates[outB_L] == -1 && edgeStates[outL_B] == -1) {
+                                int curr_r = r - 1, curr_c = c + 1;
+                                while (getClue(curr_r, curr_c) == 2) { curr_r--; curr_c++; }
+                                int endClue = getClue(curr_r, curr_c);
+                                if (endClue == 1) {
+                                    if (!setEdgeState(getHEdgeIndex(curr_r + 1, curr_c), -1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(curr_r, curr_c), -1)) AC3_RETURN_FALSE;
+                                } else if (endClue == 3) {
+                                    if (!setEdgeState(getHEdgeIndex(r + 1, c), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r, c), 1)) AC3_RETURN_FALSE;
+                                }
+                            }
+                            
+                            // Bottom-Right Dot Outside Edges: H(r+1, c+1) and V(r+1, c+1)
+                            int outB_R = getHEdgeIndex(r + 1, c + 1);
+                            int outR_B = getVEdgeIndex(r + 1, c + 1);
+                            if (outB_R != numEdges && outR_B != numEdges && edgeStates[outB_R] == -1 && edgeStates[outR_B] == -1) {
+                                int curr_r = r - 1, curr_c = c - 1;
+                                while (getClue(curr_r, curr_c) == 2) { curr_r--; curr_c--; }
+                                int endClue = getClue(curr_r, curr_c);
+                                if (endClue == 1) {
+                                    if (!setEdgeState(getHEdgeIndex(curr_r + 1, curr_c), -1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(curr_r, curr_c + 1), -1)) AC3_RETURN_FALSE;
+                                } else if (endClue == 3) {
+                                    if (!setEdgeState(getHEdgeIndex(r + 1, c), 1)) AC3_RETURN_FALSE;
+                                    if (!setEdgeState(getVEdgeIndex(r, c + 1), 1)) AC3_RETURN_FALSE;
+                                }
                             }
                         }
                     }
@@ -2176,7 +2618,7 @@ static inline bool deductIncremental_internal() {
             // 2. Process dots
             int dotIdx = popDot();
             if (dotIdx != -1) {
-                current_rule_name = "交点制約: 線は交差・分岐しない"; RECORD_AC3_TIME(3);
+                current_rule_name = "交点制約: 線は交差・分岐しない"; RECORD_AC3_TIME(103);
                 dbgSource = "dot";
                 dbgDot = dotIdx;
                 dbgCell = -1;
@@ -2185,7 +2627,17 @@ static inline bool deductIncremental_internal() {
                 
                 // --- NEW GENERALIZED 1-1 / 1-3 DOT BORDER LOGIC ---
                 if (enableAdvancedAC3) {
-                    if (!checkDotBorderLogic(r, c)) AC3_RETURN_FALSE;
+                    int prev_rule_id = ac3_current_rule_id;
+                    const char* prev_rule_name = current_rule_name;
+                    current_rule_name = "局所制約: 1-1 / 1-3の境界定理";
+                    ac3_current_rule_id = 138;
+                    
+                    bool res = checkDotBorderLogic(r, c);
+                    
+                    ac3_current_rule_id = prev_rule_id;
+                    current_rule_name = prev_rule_name;
+                    
+                    if (!res) AC3_RETURN_FALSE;
                 }
                 // --------------------------------------------------
 
@@ -2223,7 +2675,17 @@ static inline bool deductIncremental_internal() {
                                 edgeStates[edgeIdx] = 0;
                                 if (!solved) {
                                     // It is a premature small loop. It must be a cross!
-                                    if (!setEdgeState(edgeIdx, -1)) AC3_RETURN_FALSE;
+                                    int prev_rule_id = ac3_current_rule_id;
+                                    const char* prev_rule_name = current_rule_name;
+                                    current_rule_name = "局所制約: 早期閉路禁止(ついで処理)";
+                                    ac3_current_rule_id = 141; // Using the same ID as global premature loop, or create a new one. Let's use the global one for aggregation.
+                                    
+                                    bool res = setEdgeState(edgeIdx, -1);
+                                    
+                                    ac3_current_rule_id = prev_rule_id;
+                                    current_rule_name = prev_rule_name;
+                                    
+                                    if (!res) AC3_RETURN_FALSE;
                                     crosses++;
                                     continue;
                                 }
@@ -2256,40 +2718,50 @@ static inline bool deductIncremental_internal() {
                         }
                     } else if (lines == 0 && undecidedCount == 2) {
                         // Rule A: Generalized Corner Heuristic
-                        int e1 = undecided[0];
-                        int e2 = undecided[1];
-                        bool e1IsH = (e1 < numH);
-                        bool e2IsH = (e2 < numH);
-                        if (e1IsH != e2IsH) {
-                            int hEdge = e1IsH ? e1 : e2;
-                            int vEdge = e1IsH ? e2 : e1;
-                            int hr = hEdge / cols;
-                            int hc = hEdge % cols;
-                            int vr = (vEdge - numH) / (cols + 1);
-                            int vc = (vEdge - numH) % (cols + 1);
+                        if (ac3_current_difficulty_limit >= 2) {
+                            int prev_rule_id = ac3_current_rule_id;
+                            const char* prev_rule_name = current_rule_name;
+                            current_rule_name = "Medium (Corner Dot Heuristic)";
+                            ac3_current_rule_id = 111;
                             
-                            int cr = -1, cc = -1;
-                            if (hc == c && vr == r) {
-                                cr = r; cc = c;
-                            } else if (hc == c - 1 && vr == r) {
-                                cr = r; cc = c - 1;
-                            } else if (hc == c && vr == r - 1) {
-                                cr = r - 1; cc = c;
-                            } else if (hc == c - 1 && vr == r - 1) {
-                                cr = r - 1; cc = c - 1;
-                            }
-                            
-                            if (cr >= 0 && cr < rows && cc >= 0 && cc < cols) {
-                                int cellIdx = cr * cols + cc;
-                                int clue = clues[cellIdx];
-                                if (clue == 3) {
-                                    if (!setEdgeState(e1, 1)) AC3_RETURN_FALSE;
-                                    if (!setEdgeState(e2, 1)) AC3_RETURN_FALSE;
-                                } else if (clue == 1) {
-                                    if (!setEdgeState(e1, -1)) AC3_RETURN_FALSE;
-                                    if (!setEdgeState(e2, -1)) AC3_RETURN_FALSE;
+                            int e1 = undecided[0];
+                            int e2 = undecided[1];
+                            bool e1IsH = (e1 < numH);
+                            bool e2IsH = (e2 < numH);
+                            if (e1IsH != e2IsH) {
+                                int hEdge = e1IsH ? e1 : e2;
+                                int vEdge = e1IsH ? e2 : e1;
+                                int hr = hEdge / cols;
+                                int hc = hEdge % cols;
+                                int vr = (vEdge - numH) / (cols + 1);
+                                int vc = (vEdge - numH) % (cols + 1);
+                                
+                                int cr = -1, cc = -1;
+                                if (hc == c && vr == r) {
+                                    cr = r; cc = c;
+                                } else if (hc == c - 1 && vr == r) {
+                                    cr = r; cc = c - 1;
+                                } else if (hc == c && vr == r - 1) {
+                                    cr = r - 1; cc = c;
+                                } else if (hc == c - 1 && vr == r - 1) {
+                                    cr = r - 1; cc = c - 1;
+                                }
+                                
+                                if (cr >= 0 && cr < rows && cc >= 0 && cc < cols) {
+                                    int cellIdx = cr * cols + cc;
+                                    int clue = clues[cellIdx];
+                                    if (clue == 3) {
+                                        if (!setEdgeState(e1, 1)) AC3_RETURN_FALSE;
+                                        if (!setEdgeState(e2, 1)) AC3_RETURN_FALSE;
+                                    } else if (clue == 1) {
+                                        if (!setEdgeState(e1, -1)) AC3_RETURN_FALSE;
+                                        if (!setEdgeState(e2, -1)) AC3_RETURN_FALSE;
+                                    }
                                 }
                             }
+                            
+                            ac3_current_rule_id = prev_rule_id;
+                            current_rule_name = prev_rule_name;
                         }
                     }
                 } else {
@@ -2298,12 +2770,15 @@ static inline bool deductIncremental_internal() {
                     }
                 }
 
-                current_rule_name = "交点制約: 角の処理(1の斜め等)"; RECORD_AC3_TIME(4);
+                // (No special corner dot rules needed here, left to cell logic)
                 // 3. Advanced Rule: Line entering a 3 corner
                 int eL = getHEdgeIndex(r, c - 1);
                 int eR = getHEdgeIndex(r, c);
                 int eT = getVEdgeIndex(r - 1, c);
                 int eB = getVEdgeIndex(r, c);
+                
+                if (ac3_current_difficulty_limit >= DIFF_HARD) {
+                    RECORD_AC3_TIME(134);
                 
                 // Bottom-Right cell (cr=r, cc=c)
                 if (getClue(r, c) == 3) {
@@ -2341,9 +2816,12 @@ static inline bool deductIncremental_internal() {
                         if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), 1)) AC3_RETURN_FALSE;
                     }
                 }
+                }
                 
                 // 4. Generalized Rule: Line entering a 2 corner with opposite known
-                // Bottom-Right cell (cr=r, cc=c)
+                if (ac3_current_difficulty_limit >= DIFF_HARD) {
+                    RECORD_AC3_TIME(133);
+                    // Bottom-Right cell (cr=r, cc=c)
                 if (getClue(r, c) == 2) {
                     bool entered = (edgeStates[eL] == 1 && edgeStates[eT] == -1) || (edgeStates[eL] == -1 && edgeStates[eT] == 1);
                     bool entering_possible = (edgeStates[eL] == 1 && edgeStates[eT] == 0) || (edgeStates[eL] == 0 && edgeStates[eT] == 1);
@@ -2415,9 +2893,12 @@ static inline bool deductIncremental_internal() {
                         else if (edgeStates[oppL] == 1) { if (!setEdgeState(oppT, -1)) AC3_RETURN_FALSE; }
                     }
                 }
+                }
 
                 // 5. Generalized Rule: Line entering a 1 corner
-                // Bottom-Right cell (cr=r, cc=c)
+                if (ac3_current_difficulty_limit >= DIFF_HARD) {
+                    RECORD_AC3_TIME(135);
+                    // Bottom-Right cell (cr=r, cc=c)
                 if (getClue(r, c) == 1) {
                     bool entered = (edgeStates[eL] == 1 && edgeStates[eT] == -1) || (edgeStates[eL] == -1 && edgeStates[eT] == 1);
                     if (entered) {
@@ -2448,6 +2929,7 @@ static inline bool deductIncremental_internal() {
                         if (!setEdgeState(getVEdgeIndex(r - 1, c - 1), -1)) AC3_RETURN_FALSE;
                     }
                 }
+                }
             }
             
             // 3. Process GF(2) (Flush if disabled)
@@ -2457,46 +2939,52 @@ static inline bool deductIncremental_internal() {
         }
         
         if (restrictLogicToLocal) {
-            if (enableGF2 && gf2_queue_head < gf2_queue_tail) {
-                current_rule_name = "全体制約: 連立方程式(GF2)の更新"; RECORD_AC3_TIME(5);
-                if (!batchUpdateGlobalGF2()) AC3_RETURN_FALSE;
-                continue;
-            }
-            if (cellStackTop == 0 && dotStackTop == 0 && gf2_queue_head == gf2_queue_tail) {
+            gf2_queue_head = gf2_queue_tail; // Flush the GF2 queue
+            if (cellStackTop == 0 && dotStackTop == 0) {
                 break;
             }
             continue;
         }
 
         // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
-        current_rule_name = "全体制約: 内外判定(Jordan Curve)"; RECORD_AC3_TIME(6);
-        if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
+        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
+            current_rule_name = "全体制約: 内外判定(Jordan Curve)"; RECORD_AC3_TIME(142);
+            if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
+        }
         
-        current_rule_name = "全体制約: 高度な2の制約"; RECORD_AC3_TIME(7);
-        if (!applyAdvanced2Rules()) AC3_RETURN_FALSE;
-        
-        current_rule_name = "全体制約: 2の角のペア制約"; RECORD_AC3_TIME(8);
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                if (clues[r * cols + c] == 2) {
-                    int tl_v = getVEdgeIndex(r - 1, c);
-                    int tl_h = getHEdgeIndex(r, c - 1);
-                    int br_v = getVEdgeIndex(r + 1, c + 1);
-                    int br_h = getHEdgeIndex(r + 1, c + 1);
-                    if (!deductParityPair(tl_v, tl_h, br_v, br_h)) AC3_RETURN_FALSE;
-                    
-                    int tr_v = getVEdgeIndex(r - 1, c + 1);
-                    int tr_h = getHEdgeIndex(r, c + 1);
-                    int bl_v = getVEdgeIndex(r + 1, c);
-                    int bl_h = getHEdgeIndex(r + 1, c - 1);
-                    if (!deductParityPair(tr_v, tr_h, bl_v, bl_h)) AC3_RETURN_FALSE;
+        if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
+            current_rule_name = "全体制約: 仮想パスによる閉路防止"; RECORD_AC3_TIME(143);
+            if (!applyVirtualPathLogic()) AC3_RETURN_FALSE;
+        }
+
+        if (ac3_current_difficulty_limit >= DIFF_HARD) {
+            current_rule_name = "全体制約: 高度な2の制約"; RECORD_AC3_TIME(133);
+            if (!applyAdvanced2Rules()) AC3_RETURN_FALSE;
+            
+            current_rule_name = "全体制約: 2の角のペア制約"; RECORD_AC3_TIME(132);
+            for (int r = 0; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    if (clues[r * cols + c] == 2) {
+                        int tl_v = getVEdgeIndex(r - 1, c);
+                        int tl_h = getHEdgeIndex(r, c - 1);
+                        int br_v = getVEdgeIndex(r + 1, c + 1);
+                        int br_h = getHEdgeIndex(r + 1, c + 1);
+                        if (!deductParityPair(tl_v, tl_h, br_v, br_h)) AC3_RETURN_FALSE;
+                        
+                        int tr_v = getVEdgeIndex(r - 1, c + 1);
+                        int tr_h = getHEdgeIndex(r, c + 1);
+                        int bl_v = getVEdgeIndex(r + 1, c);
+                        int bl_h = getHEdgeIndex(r + 1, c - 1);
+                        if (!deductParityPair(tr_v, tr_h, bl_v, bl_h)) AC3_RETURN_FALSE;
+                    }
                 }
             }
         }
         
         bool cycleChanged = false;
-        current_rule_name = "全体制約: ループの早期閉路禁止"; RECORD_AC3_TIME(9);
-        for (int i = 0; i < numEdges; i++) {
+        if (ac3_current_difficulty_limit >= 6) {
+            current_rule_name = "全体制約: ループの早期閉路禁止"; RECORD_AC3_TIME(141);
+            for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
                 int dotA, dotB;
                 if (i < numH) {
@@ -2522,19 +3010,45 @@ static inline bool deductIncremental_internal() {
                 }
             }
         }
+        }
         
         if (cellStackTop == 0 && dotStackTop == 0 && !cycleChanged) {
             // Only when absolutely everything is exhausted, run the O(V+E) Bridge Detection
             if (enableAdvancedAC3) {
-                current_rule_name = "全体制約: 全体連結性(Bridge)"; RECORD_AC3_TIME(10);
-                if (!runUniversalParityCheck()) AC3_RETURN_FALSE;
+                if (ac3_current_difficulty_limit >= 7) { RECORD_AC3_TIME(152); if (!runUniversalParityCheck()) AC3_RETURN_FALSE; }
+            }
+            
+            if (ac3_current_difficulty_limit >= 9 && enable_deduction_logging && !restrictLogicToLocal) {
+                int edges_before = 0;
+                for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
+                
+                current_rule_name = "Extreme (LUT Deduction)"; RECORD_AC3_TIME(161);
+                if (!applyLUT()) AC3_RETURN_FALSE;
+                current_rule_name = "Extreme (Boundary LUT Deduction)"; RECORD_AC3_TIME(161);
+                if (!applyBoundaryLUTs()) AC3_RETURN_FALSE;
+                
+                int edges_after = 0;
+                for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_after++;
+                
+                if (edges_after > edges_before) {
+                    for(int r=0; r<rows; r++) {
+                        for(int c=0; c<cols; c++) cellStack[cellStackTop++] = r * cols + c;
+                    }
+                    for(int r=0; r<=rows; r++) {
+                        for(int c=0; c<=cols; c++) dotStack[dotStackTop++] = r * (cols + 1) + c;
+                    }
+                    continue;
+                }
             }
             
             if (cellStackTop == 0 && dotStackTop == 0) {
                 if (enableGF2 && gf2_queue_head < gf2_queue_tail) {
-                    current_rule_name = "全体制約: 連立方程式(GF2)の更新"; RECORD_AC3_TIME(5);
-                    if (!batchUpdateGlobalGF2()) AC3_RETURN_FALSE;
-                    continue; // Go back to the top of the outer loop
+                    if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) { 
+                        RECORD_AC3_TIME(151); 
+                        if (!batchUpdateGlobalGF2()) AC3_RETURN_FALSE; 
+                        continue; 
+                    }
+                    break; // Blocked by difficulty, stop inferring
                 }
                 
                 if (gf2_queue_head == gf2_queue_tail) {
@@ -3058,36 +3572,57 @@ int check_human_solvability() {
         return 0; // Contradiction
     }
     
-    bool changed = true;
-    int loopCount = 0;
-    while (changed) {
-        loopCount++;
-        if (loopCount > 10000) {
-            printf("[C ERROR] check_human_solvability infinite loop detected!\n");
-            return 0; // Force stop
-        }
-        // Run Level 1-3 propagation
-        if (!deductIncremental()) {
-            return 0; // Contradiction
+    while (true) {
+        bool progressInPhase = false;
+        
+        if (enable_deduction_logging) {
+            ac3_current_difficulty_limit = 1;
+            while (ac3_current_difficulty_limit <= 10) {
+                int edges_before = 0;
+                for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
+                
+                if (!deductIncremental()) return 0;
+                
+                int edges_after = 0;
+                for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_after++;
+                
+                if (edges_after > edges_before) {
+                    ac3_current_difficulty_limit = 1;
+                    progressInPhase = true;
+                } else {
+                    ac3_current_difficulty_limit++;
+                }
+                
+                bool allDecided = true;
+                for (int i = 0; i < numEdges; i++) {
+                    if (edgeStates[i] == 0) { allDecided = false; break; }
+                }
+                if (allDecided) return isSolved() ? 1 : 0;
+            }
+        } else {
+            ac3_current_difficulty_limit = 10;
+            int edges_before = 0;
+            for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
+            if (!deductIncremental()) return 0;
+            int edges_after = 0;
+            for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_after++;
+            if (edges_after > edges_before) progressInPhase = true;
+            
+            bool allDecided = true;
+            for (int i = 0; i < numEdges; i++) {
+                if (edgeStates[i] == 0) { allDecided = false; break; }
+            }
+            if (allDecided) return isSolved() ? 1 : 0;
         }
         
-        // Check if fully solved
-        bool allDecided = true;
-        for (int i = 0; i < numEdges; i++) {
-            if (edgeStates[i] == 0) { allDecided = false; break; }
-        }
-        if (allDecided) {
-            return isSolved() ? 1 : 0;
+        if (!enable_deduction_logging) {
+            return -2; // Stalled: No lookahead in generation mode
         }
         
-        if (lookaheadMaxLimit == 0) {
-            return -2; // Stalled: Lookahead is disabled for this difficulty
-        }
-
-        changed = false;
-
+        // In deduction logging mode, run 1-step lookahead as Level 10 logic.
+        bool lookaheadFound = false;
         double t_lookahead_start = emscripten_get_now();
-        // 2. Perform 1-Step Lookahead on Undecided Edges
+        
         for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
                 if (!isEdgeConstrained(i)) continue; // Prune unconstrained edges
@@ -3103,7 +3638,11 @@ int check_human_solvability() {
                 lookaheadConfirmedCount = 0;
                 isDoingLookahead = true;
                 lookaheadEdgeTests++;
+                
+                int oldLimit = lookaheadMaxLimit;
+                lookaheadMaxLimit = 0; 
                 bool lineSuccess = setEdgeState(i, 1) && deductIncremental();
+                lookaheadMaxLimit = oldLimit;
                 isDoingLookahead = false;
                 
                 dsuRollback(checkpoint);
@@ -3115,12 +3654,17 @@ int check_human_solvability() {
                 clearStacks();
                 
                 if (!lineSuccess) {
-                    // Line leads to contradiction -> Must be Cross (-1)
                     extern int lookaheadForcedEdgesTotal;
                     lookaheadForcedEdgesTotal++;
+                    
+                    current_rule_name = "Lookahead (Depth 1)";
+                    RECORD_AC3_TIME(200);
                     if (!setEdgeState(i, -1)) return 0;
-                    changed = true;
-                    break; // Restart main propagation loop
+                    
+                    lookaheadFound = true;
+                    for(int r=0; r<rows; r++) for(int c=0; c<cols; c++) cellStack[cellStackTop++] = r*cols+c;
+                    for(int r=0; r<=rows; r++) for(int c=0; c<=cols; c++) dotStack[dotStackTop++] = r*(cols+1)+c;
+                    break;
                 }
                 
                 // Scenario B: Assume Cross (-1)
@@ -3133,7 +3677,11 @@ int check_human_solvability() {
                 lookaheadConfirmedCount = 0;
                 isDoingLookahead = true;
                 lookaheadEdgeTests++;
+                
+                oldLimit = lookaheadMaxLimit;
+                lookaheadMaxLimit = 0;
                 bool crossSuccess = setEdgeState(i, -1) && deductIncremental();
+                lookaheadMaxLimit = oldLimit;
                 isDoingLookahead = false;
                 
                 dsuRollback(checkpoint);
@@ -3145,18 +3693,32 @@ int check_human_solvability() {
                 clearStacks();
                 
                 if (!crossSuccess) {
-                    // Cross leads to contradiction -> Must be Line (1)
                     extern int lookaheadForcedEdgesTotal;
                     lookaheadForcedEdgesTotal++;
+                    
+                    current_rule_name = "Lookahead (Depth 1)";
+                    RECORD_AC3_TIME(200);
                     if (!setEdgeState(i, 1)) return 0;
-                    changed = true;
-                    break; // Restart main propagation loop
+                    
+                    lookaheadFound = true;
+                    for(int r=0; r<rows; r++) for(int c=0; c<cols; c++) cellStack[cellStackTop++] = r*cols+c;
+                    for(int r=0; r<=rows; r++) for(int c=0; c<=cols; c++) dotStack[dotStackTop++] = r*(cols+1)+c;
+                    break;
                 }
-            } // closes if (edgeStates[i] == 0)
-        } // closes for loop
+            }
+        }
         perf_lookahead += emscripten_get_now() - t_lookahead_start;
-    } // closes while (changed)
-    return -2; // Stalled: Not solvable by 1-step lookahead human logic
+        
+        bool allDecided = true;
+        for (int i = 0; i < numEdges; i++) {
+            if (edgeStates[i] == 0) { allDecided = false; break; }
+        }
+        if (allDecided) return isSolved() ? 1 : 0;
+        
+        if (!lookaheadFound) {
+            return -2; // Stalled: even Lookahead could not find anything
+        }
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -3868,10 +4430,10 @@ static bool checkEpicCriteria(const char* difficulty) {
     // Check solvability with the specific difficulty setting
     bool solvable = checkSolvability(difficulty);
     
-    bool usedGF2 = (ac3_rule_hit_counts[5] > 0); // 5: GF2
-    bool usedJordan = (ac3_rule_hit_counts[6] > 0); // 6: Jordan Curve
-    bool usedNoEarlyClose = (ac3_rule_hit_counts[9] > 0); // 9: ループの早期閉路禁止
-    bool usedBridge = (ac3_rule_hit_counts[10] > 0); // 10: 全体連結性(Bridge)
+    bool usedGF2 = (ac3_rule_hit_counts[151] > 0); // 151: GF2
+    bool usedJordan = (ac3_rule_hit_counts[142] > 0); // 142: Jordan Curve
+    bool usedNoEarlyClose = (ac3_rule_hit_counts[141] > 0); // 141: ループの早期閉路禁止
+    bool usedBridge = (ac3_rule_hit_counts[152] > 0); // 152: 全体連結性(Bridge)
     
     // 全ての高度な大域定理が「新しいエッジを確定させた」場合にのみOKとする（真の全部乗せ）
     bool meetsCriteria = (usedGF2 && usedJordan && usedNoEarlyClose && usedBridge);
@@ -4222,10 +4784,10 @@ void generate_puzzle_wasm(const char* difficulty) {
         epicMet = checkEpicCriteria(difficulty);
         
         // フォールバック用に、一番「高度な推論が使われた種類数」を保存しておく
-        int currentHitScore = (ac3_rule_hit_counts[5] > 0 ? 1 : 0) + 
-                              (ac3_rule_hit_counts[6] > 0 ? 1 : 0) + 
-                              (ac3_rule_hit_counts[9] > 0 ? 1 : 0) + 
-                              (ac3_rule_hit_counts[10] > 0 ? 1 : 0);
+        int currentHitScore = (ac3_rule_hit_counts[151] > 0 ? 1 : 0) + 
+                              (ac3_rule_hit_counts[142] > 0 ? 1 : 0) + 
+                              (ac3_rule_hit_counts[141] > 0 ? 1 : 0) + 
+                              (ac3_rule_hit_counts[152] > 0 ? 1 : 0);
         if (currentHitScore > bestHitCount) {
             bestHitCount = currentHitScore;
             memcpy(bestEdges, edgeStates, numEdges);
@@ -4249,7 +4811,28 @@ void set_advanced_ac3(bool enable) {
 
 EMSCRIPTEN_KEEPALIVE
 int get_lookahead_count() {
-    return solvabilityChecks;
+    return lookaheadEdgeTests;
 }
 
+// --- Deduction Logging API ---
+EMSCRIPTEN_KEEPALIVE
+int get_deduction_log_count() {
+    return deduction_log_count;
+}
 
+EMSCRIPTEN_KEEPALIVE
+DeductionLog* get_deduction_logs_ptr() {
+    return deduction_logs;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void analyze_puzzle(const char* difficulty) {
+    memset(edgeStates, 0, numEdges);
+    deduction_log_count = 0;
+    enable_deduction_logging = true;
+    
+    checkSolvability(difficulty);
+    
+    enable_deduction_logging = false;
+    ac3_current_difficulty_limit = 10;
+}

@@ -592,6 +592,28 @@ class LoopCourseGame {
         clues.push(rowClues);
       }
 
+      let initialEdgeStates = null;
+      let currentLineIdx = 2 + rows;
+      if (lines.length >= currentLineIdx + (rows + 1) + rows) {
+        const numH = (rows + 1) * cols;
+        const numV = rows * (cols + 1);
+        initialEdgeStates = new Int8Array(numH + numV);
+        let hIdx = 0;
+        for (let i = 0; i < rows + 1; i++) {
+          const parts = lines[currentLineIdx++].trim().split(/\s+/);
+          for (let j = 0; j < cols; j++) {
+            initialEdgeStates[hIdx++] = parseInt(parts[j], 10) || 0;
+          }
+        }
+        let vIdx = numH;
+        for (let i = 0; i < rows; i++) {
+          const parts = lines[currentLineIdx++].trim().split(/\s+/);
+          for (let j = 0; j < cols + 1; j++) {
+            initialEdgeStates[vIdx++] = parseInt(parts[j], 10) || 0;
+          }
+        }
+      }
+
       this.statusTextEl.textContent = 'カスタム盤面の正解を計算中... ⚡';
       this.statusTextEl.classList.add('loading');
 
@@ -630,7 +652,7 @@ class LoopCourseGame {
           console.warn("Could not find a solution for the loaded puzzle.");
         }
 
-        this.loadCustomGame(rows, cols, clues, solution);
+        this.loadCustomGame(rows, cols, clues, solution, initialEdgeStates);
 
         // Reset input to allow loading the same file again
         e.target.value = '';
@@ -642,7 +664,7 @@ class LoopCourseGame {
     }
   }
 
-  loadCustomGame(rows, cols, clues, solution) {
+  loadCustomGame(rows, cols, clues, solution, initialEdgeStates = null) {
     this.gameCompleted = false;
     this.resetHintFailedState();
     this.hasManuallyAdjusted = false;
@@ -668,6 +690,9 @@ class LoopCourseGame {
     this.numEdges = this.numH + this.numV;
 
     this.edgeStates = new Int8Array(this.numEdges);
+    if (initialEdgeStates) {
+      this.edgeStates.set(initialEdgeStates);
+    }
     this.cellStates = new Int8Array(this.rows * this.cols);
     this.undoStack = [];
     this.redoStack = [];

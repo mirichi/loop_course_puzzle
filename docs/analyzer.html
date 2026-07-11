@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loopcourse Analyzer Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            color: #475569;
+            margin-top: 0;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+        }
+
+        p.desc {
+            font-size: 0.95rem;
+            color: #64748b;
+            line-height: 1.5;
+        }
+
+        select {
+            padding: 8px;
+            font-size: 1rem;
+            border-radius: 4px;
+            border: 1px solid #cbd5e1;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>
+            <span>パズル解き味分析 (Analyzer Dashboard)</span>
+            <select id="fileSelector">
+                <option value="deduction_log.csv">自動生成パズル (deduction_log.csv)</option>
+                <option value="slitherlink_e1_deduction.csv">職人パズル E1 (slitherlink_e1_deduction.csv)</option>
+                <option value="slitherlink_e2_deduction.csv">職人パズル E2 (slitherlink_e2_deduction.csv)</option>
+                <option value="slitherlink_e3_deduction.csv">職人パズル E3 (slitherlink_e3_deduction.csv)</option>
+                <option value="slitherlink_e4_deduction.csv">職人パズル E4 (slitherlink_e4_deduction.csv)</option>
+                <option value="slitherlink_e5_deduction.csv">職人パズル E5 (slitherlink_e5_deduction.csv)</option>
+                <option value="slitherlink_f1_deduction.csv">職人パズル F1 (slitherlink_f1_deduction.csv)</option>
+                <option value="slitherlink_f2_deduction.csv">職人パズル F2 (slitherlink_f2_deduction.csv)</option>
+                <option value="slitherlink_f3_deduction.csv">職人パズル F3 (slitherlink_f3_deduction.csv)</option>
+                <option value="slitherlink_f4_deduction.csv">slitherlink_f4.txt (職人問題 超絶)</option>
+                <option value="PencilBox_20x20_Master_deduction.csv">PencilBox_20x20_Master.txt (自動生成 20x20)</option>
+                <option value="PencilBox_20x20_Medium_deduction.csv">PencilBox_20x20_Medium.txt (自動生成 20x20)</option>
+            </select>
+        </h1>
+
+        <div class="card">
+            <h2>1. 解き心地のリズム（難易度遷移グラフ）</h2>
+            <p class="desc">
+                横軸が「パズルを解き進めるステップ」、縦軸がその時に必要だった「ルールの難易度」です。<br>
+                <strong>見方:</strong>
+                下を這うようになだらかな部分が「簡単な手筋で連鎖的に埋まっていく（スラスラ解ける）」カタルシスの区間です。時折現れる高い山が「ここで難易度の高い手筋を使わないと進まない」ボトルネック（詰まりポイント）を表します。職人のパズルは、高い山の後に長い平野（ご褒美の連鎖）が続くメリハリの効いた形になります。
+            </p>
+            <div class="chart-container">
+                <canvas id="difficultyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>ルールの難易度一覧 (Difficulty Mapping)</h2>
+            <p class="desc">ソルバーがルールを試す順番（難易度レベル）です。数字が小さいほど簡単で、人間が優先して気付きやすい手筋と定義しています。</p>
+            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                <ul style="line-height: 1.6; margin-top: 0;">
+                    <li><strong>Difficulty 1 (Basic)</strong>: セルの数字と線の基本（Cell Clue）、点の線の基本（Dot Line Limit）</li>
+                    <li><strong>Difficulty 2 (Easy)</strong>: 0の角、3の角、隣接する3（Corner 0, Corner 3, Adjacent 3s）</li>
+                    <li><strong>Difficulty 3 (Medium)</strong>: 2の角、1の斜め制約（Corner 2, Diagonal 1）</li>
+                </ul>
+                <ul style="line-height: 1.6; margin-top: 0;">
+                    <li><strong>Difficulty 4 (Hard)</strong>: 3の角の延長、2の角のペア制約など（Corner 3 Ext, Advanced 2など）</li>
+                    <li><strong>Difficulty 5 (Global 1)</strong>: ジョルダン曲線定理（Jordan Curve）</li>
+                    <li><strong>Difficulty 6 (Global 2)</strong>: 早期の閉路禁止（Early Closed Loop）</li>
+                    <li><strong>Difficulty 7 (Global 3)</strong>: 全体連結性（Bridge Connectivity）</li>
+                    <li><strong>Difficulty 8 (Global 4)</strong>: GF2 パリティ連立方程式（GF2 Parity）</li>
+                    <li><strong>Difficulty 9 (Extreme)</strong>: 3x3パターン推論（LUT Deduction）</li>
+                    <li><strong>Difficulty 10+ (Lookahead)</strong>: 仮定法・背理法推論（Lookahead Depth）</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>2. 要求される手筋のテーマ（ルール別使用回数）</h2>
+            <p class="desc">
+                どのルールが何回使われたかを集計しています。<br>
+                <strong>見方:</strong> 「このパズルは斜めルールの出番が多いな」「角の処理ばかり要求されるな」といった、パズルの『個性（テーマ）』が一目でわかります。
+            </p>
+            <div class="chart-container" style="height: 500px;">
+                <canvas id="ruleChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CSVのパース用簡易関数
+        function parseCSV(text) {
+            const lines = text.trim().split('\n');
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].split(',');
+                if (parts.length >= 5) {
+                    data.push({
+                        step: parseInt(parts[0]),
+                        edgeIdx: parseInt(parts[1]),
+                        ruleId: parseInt(parts[2]),
+                        difficulty: parseInt(parts[3]),
+                        ruleName: parts[4].replace(/"/g, '')
+                    });
+                }
+            }
+            return data;
+        }
+
+        let difficultyChartInstance = null;
+        let ruleChartInstance = null;
+
+        function loadData(filename) {
+            fetch(filename)
+                .then(res => {
+                    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                    return res.text();
+                })
+                .then(text => {
+                    const logs = parseCSV(text).filter(d => d.ruleId !== -1);
+
+                    const steps = logs.map(d => d.step);
+                    const difficulties = logs.map(d => d.difficulty);
+
+                    if (difficultyChartInstance) difficultyChartInstance.destroy();
+                    const ctxDiff = document.getElementById('difficultyChart').getContext('2d');
+                    difficultyChartInstance = new Chart(ctxDiff, {
+                        type: 'line',
+                        data: {
+                            labels: steps,
+                            datasets: [{
+                                label: '必要だった難易度 (Difficulty)',
+                                data: difficulties,
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                borderWidth: 2,
+                                fill: true,
+                                stepped: true,
+                                pointRadius: 1,
+                                pointHoverRadius: 5
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    max: 10,
+                                    title: { display: true, text: '難易度 (1=簡単, 10=先読み)' }
+                                },
+                                x: {
+                                    title: { display: true, text: '解き進めた手数 (Step)' }
+                                }
+                            },
+                            plugins: {
+                                tooltip: {
+                                    callbacks: {
+                                        afterLabel: function (context) {
+                                            return '使ったルール: ' + logs[context.dataIndex].ruleName;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    const ruleCounts = {};
+                    logs.forEach(d => {
+                        if (!ruleCounts[d.ruleName]) ruleCounts[d.ruleName] = 0;
+                        ruleCounts[d.ruleName]++;
+                    });
+
+                    const ruleNames = Object.keys(ruleCounts).sort((a, b) => ruleCounts[b] - ruleCounts[a]);
+                    const counts = ruleNames.map(name => ruleCounts[name]);
+
+                    const ruleColors = {
+                        '151': 'rgba(180, 80, 200, 1)',   // GF2
+                        '152': 'rgba(200, 50, 150, 1)',   // Bridge
+                        '161': 'rgba(255, 0, 0, 1)',      // LUT (Extreme)
+                    };
+
+                    if (ruleChartInstance) ruleChartInstance.destroy();
+                    const ctxRule = document.getElementById('ruleChart').getContext('2d');
+                    ruleChartInstance = new Chart(ctxRule, {
+                        type: 'bar',
+                        data: {
+                            labels: ruleNames,
+                            datasets: [{
+                                label: '使用回数',
+                                data: counts,
+                                backgroundColor: '#8b5cf6',
+                                borderRadius: 4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            indexAxis: 'y',
+                            scales: {
+                                x: { beginAtZero: true }
+                            }
+                        }
+                    });
+                })
+                .catch(err => {
+                    console.error('CSVの読み込みに失敗しました', err);
+                    alert(`ファイル ${filename} が読み込めませんでした。まだ解析を実行していない可能性があります。`);
+                });
+        }
+
+        document.getElementById('fileSelector').addEventListener('change', function (e) {
+            loadData(e.target.value);
+        });
+
+        // Initial load
+        loadData(document.getElementById('fileSelector').value);
+    </script>
+</body>
+
+</html>
