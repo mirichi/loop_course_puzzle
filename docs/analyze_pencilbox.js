@@ -88,9 +88,9 @@ async function main() {
         else if (ruleId >= 131 && ruleId <= 140) diff = 4;
         else if (ruleId == 143) diff = 6;
         else if (ruleId >= 141 && ruleId <= 149) diff = 5;
-        else if (ruleId == 151) diff = 8;
+        else if (ruleId == 151) diff = 9;
         else if (ruleId >= 152 && ruleId <= 159) diff = 7;
-        else if (ruleId >= 161 && ruleId <= 169) diff = 9;
+        else if (ruleId >= 161 && ruleId <= 169) diff = 8;
         else if (ruleId == 200 || depth > 0) diff = 10 + depth;
         else diff = ruleId;
 
@@ -101,8 +101,12 @@ async function main() {
     const outCsv = `${fileName}_deduction.csv`;
     fs.writeFileSync(outCsv, csvData);
     console.log(`[Analyzer] Dumped ${count} deduction steps to '${outCsv}'.`);
-
-    // If it didn't solve everything, note it.
+    const get_edge_states_ptr = Module.cwrap('get_edge_states_ptr', 'number', []);
+    const edgesPtr = get_edge_states_ptr();
+    const edges = new Int8Array(Module.HEAP8.buffer, edgesPtr, 838);
+    let unknown = 0;
+    for(let i=0; i<838; i++) if(edges[i]==0) unknown++;
+    console.log('Unknown edges:', unknown);
     // We could check if there are unresolved edges by calling something, 
     // but the CSV step count gives us a hint anyway.
 }

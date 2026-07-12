@@ -9,11 +9,14 @@
 extern int rows;
 extern int cols;
 extern int8_t clues[];
+extern int8_t edgeStates[];
+extern bool enable_deduction_logging;
+
 
 // Function prototypes from loopcourse.c
 int getHEdgeIndex(int r, int c);
 int getVEdgeIndex(int r, int c);
-bool setEdgeState(int edgeIdx, int8_t state);
+// bool setEdgeState(int edgeIdx, int8_t state);
 
 #define NUM_PATTERNS 1953125
 uint64_t* valid_mask_AND = NULL;
@@ -149,6 +152,7 @@ void init_lut() {
 
 // Boundary LUT arrays
 #define NUM_PATTERNS_2x3 15625
+#define NUM_PATTERNS_3x2 15625
 #define NUM_PATTERNS_2x2 625
 
 uint32_t* valid_mask_AND_2x3_top = NULL;
@@ -160,449 +164,642 @@ uint32_t* valid_mask_OR_3x2_left = NULL;
 uint32_t* valid_mask_AND_3x2_right = NULL;
 uint32_t* valid_mask_OR_3x2_right = NULL;
 
-uint16_t* valid_mask_AND_2x2_tl = NULL;
-uint16_t* valid_mask_OR_2x2_tl = NULL;
-uint16_t* valid_mask_AND_2x2_tr = NULL;
-uint16_t* valid_mask_OR_2x2_tr = NULL;
-uint16_t* valid_mask_AND_2x2_bl = NULL;
-uint16_t* valid_mask_OR_2x2_bl = NULL;
-uint16_t* valid_mask_AND_2x2_br = NULL;
-uint16_t* valid_mask_OR_2x2_br = NULL;
+uint32_t* valid_mask_AND_2x2_tl = NULL;
+uint32_t* valid_mask_OR_2x2_tl = NULL;
+uint32_t* valid_mask_AND_2x2_tr = NULL;
+uint32_t* valid_mask_OR_2x2_tr = NULL;
+uint32_t* valid_mask_AND_2x2_bl = NULL;
+uint32_t* valid_mask_OR_2x2_bl = NULL;
+uint32_t* valid_mask_AND_2x2_br = NULL;
+uint32_t* valid_mask_OR_2x2_br = NULL;
 
 void init_boundary_luts() {
-    if (valid_mask_AND_2x3_top != NULL) return;
-
-    valid_mask_AND_2x3_top = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_OR_2x3_top = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_AND_2x3_bottom = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_OR_2x3_bottom = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_AND_3x2_left = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_OR_3x2_left = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_AND_3x2_right = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-    valid_mask_OR_3x2_right = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
-
-    valid_mask_AND_2x2_tl = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_OR_2x2_tl = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_AND_2x2_tr = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_OR_2x2_tr = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_AND_2x2_bl = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_OR_2x2_bl = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_AND_2x2_br = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-    valid_mask_OR_2x2_br = (uint16_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint16_t));
-
+    if (valid_mask_AND_2x3_top == NULL) valid_mask_AND_2x3_top = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
+    if (valid_mask_OR_2x3_top == NULL) valid_mask_OR_2x3_top  = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
+    if (valid_mask_AND_2x3_bottom == NULL) valid_mask_AND_2x3_bottom = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
+    if (valid_mask_OR_2x3_bottom == NULL) valid_mask_OR_2x3_bottom  = (uint32_t*)malloc(NUM_PATTERNS_2x3 * sizeof(uint32_t));
+    if (valid_mask_AND_3x2_left == NULL) valid_mask_AND_3x2_left = (uint32_t*)malloc(NUM_PATTERNS_3x2 * sizeof(uint32_t));
+    if (valid_mask_OR_3x2_left == NULL) valid_mask_OR_3x2_left  = (uint32_t*)malloc(NUM_PATTERNS_3x2 * sizeof(uint32_t));
+    if (valid_mask_AND_3x2_right == NULL) valid_mask_AND_3x2_right = (uint32_t*)malloc(NUM_PATTERNS_3x2 * sizeof(uint32_t));
+    if (valid_mask_OR_3x2_right == NULL) valid_mask_OR_3x2_right  = (uint32_t*)malloc(NUM_PATTERNS_3x2 * sizeof(uint32_t));
+    if (valid_mask_AND_2x2_tl == NULL) valid_mask_AND_2x2_tl = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_OR_2x2_tl == NULL) valid_mask_OR_2x2_tl  = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_AND_2x2_tr == NULL) valid_mask_AND_2x2_tr = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_OR_2x2_tr == NULL) valid_mask_OR_2x2_tr  = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_AND_2x2_bl == NULL) valid_mask_AND_2x2_bl = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_OR_2x2_bl == NULL) valid_mask_OR_2x2_bl  = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_AND_2x2_br == NULL) valid_mask_AND_2x2_br = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
+    if (valid_mask_OR_2x2_br == NULL) valid_mask_OR_2x2_br  = (uint32_t*)malloc(NUM_PATTERNS_2x2 * sizeof(uint32_t));
     for (int i=0; i<NUM_PATTERNS_2x3; i++) {
-        valid_mask_AND_2x3_top[i] = 0x1FFFF; // 17 bits
-        valid_mask_OR_2x3_top[i] = 0;
-        valid_mask_AND_2x3_bottom[i] = 0x1FFFF;
-        valid_mask_OR_2x3_bottom[i] = 0;
-        valid_mask_AND_3x2_left[i] = 0x1FFFF;
-        valid_mask_OR_3x2_left[i] = 0;
-        valid_mask_AND_3x2_right[i] = 0x1FFFF;
-        valid_mask_OR_3x2_right[i] = 0;
+        valid_mask_AND_2x3_top[i] = 0xFFFFFFFF;
+        valid_mask_OR_2x3_top[i]  = 0;
+    }
+    for (int i=0; i<NUM_PATTERNS_2x3; i++) {
+        valid_mask_AND_2x3_bottom[i] = 0xFFFFFFFF;
+        valid_mask_OR_2x3_bottom[i]  = 0;
+    }
+    for (int i=0; i<NUM_PATTERNS_3x2; i++) {
+        valid_mask_AND_3x2_left[i] = 0xFFFFFFFF;
+        valid_mask_OR_3x2_left[i]  = 0;
+    }
+    for (int i=0; i<NUM_PATTERNS_3x2; i++) {
+        valid_mask_AND_3x2_right[i] = 0xFFFFFFFF;
+        valid_mask_OR_3x2_right[i]  = 0;
     }
     for (int i=0; i<NUM_PATTERNS_2x2; i++) {
-        valid_mask_AND_2x2_tl[i] = 0xFFF; // 12 bits
-        valid_mask_OR_2x2_tl[i] = 0;
-        valid_mask_AND_2x2_tr[i] = 0xFFF;
-        valid_mask_OR_2x2_tr[i] = 0;
-        valid_mask_AND_2x2_bl[i] = 0xFFF;
-        valid_mask_OR_2x2_bl[i] = 0;
-        valid_mask_AND_2x2_br[i] = 0xFFF;
-        valid_mask_OR_2x2_br[i] = 0;
+        valid_mask_AND_2x2_tl[i] = 0xFFFFFFFF;
+        valid_mask_OR_2x2_tl[i]  = 0;
     }
-
+    for (int i=0; i<NUM_PATTERNS_2x2; i++) {
+        valid_mask_AND_2x2_tr[i] = 0xFFFFFFFF;
+        valid_mask_OR_2x2_tr[i]  = 0;
+    }
+    for (int i=0; i<NUM_PATTERNS_2x2; i++) {
+        valid_mask_AND_2x2_bl[i] = 0xFFFFFFFF;
+        valid_mask_OR_2x2_bl[i]  = 0;
+    }
+    for (int i=0; i<NUM_PATTERNS_2x2; i++) {
+        valid_mask_AND_2x2_br[i] = 0xFFFFFFFF;
+        valid_mask_OR_2x2_br[i]  = 0;
+    }
     int pow5[] = {1, 5, 25, 125, 625, 3125, 15625, 78125, 390625};
-
-    // GENERATE 2x3 TOP LUT
+    // GENERATE 2X3_TOP LUT
     for (int i=0; i<(1<<17); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 3 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (9 + (r) * 4 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=2; r++) {
-            for (int c=0; c<=3; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 2) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 3) sum += H_BIT(r, c);
-                
-                // Top boundary condition: no edges go UP from r=0
-                if (r == 0 && (c == 1 || c == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else if (r == 1 && (c == 1 || c == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 2) & 1) + ((i >> 11) & 1)) == 1 || (((i >> 1) & 1) + ((i >> 2) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 12) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 13) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 4) & 1) + ((i >> 10) & 1) + ((i >> 14) & 1)) == 1 || (((i >> 3) & 1) + ((i >> 4) & 1) + ((i >> 10) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 11) & 1) + ((i >> 15) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 11) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 13) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 7) & 1) + ((i >> 8) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 8) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[6];
-            for (int r=0; r<2; r++) {
-                for (int c=0; c<3; c++) {
-                    clue_arr[r*3+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 17);
+            if (((i >> 2) & 1) + ((i >> 12) & 1) == 1) base_state |= (1U << 18);
+            if (((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 13) & 1) == 1) base_state |= (1U << 19);
+            if (((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 16) & 1) == 1) base_state |= (1U << 20);
+            if (((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 14) & 1) == 1) base_state |= (1U << 21);
+            if (((i >> 7) & 1) + ((i >> 8) & 1) + ((i >> 15) & 1) == 1) base_state |= (1U << 22);
+            int corner_sums[2];
+            corner_sums[0] = ((i >> 6) & 1) + ((i >> 13) & 1);
+            corner_sums[1] = ((i >> 8) & 1) + ((i >> 16) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 23; int cb2_0 = 24;
+            int cb1_1 = 25; int cb2_1 = 26;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                for (int i1=0; i1<num_pairs[corner_sums[1]]; i1++) {
+                    uint32_t s1 = s0 | ((uint32_t)pairs[corner_sums[1]][i1][0] << cb1_1) | ((uint32_t)pairs[corner_sums[1]][i1][1] << cb2_1);
+                    comp_AND &= s1;
+                    comp_OR |= s1;
                 }
             }
-            for (int sub=0; sub<64; sub++) {
+
+            int clue_arr[6];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 4) & 1) + ((i >> 10) & 1) + ((i >> 11) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 5) & 1) + ((i >> 11) & 1) + ((i >> 12) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 6) & 1) + ((i >> 13) & 1) + ((i >> 14) & 1);
+            clue_arr[4] = ((i >> 4) & 1) + ((i >> 7) & 1) + ((i >> 14) & 1) + ((i >> 15) & 1);
+            clue_arr[5] = ((i >> 5) & 1) + ((i >> 8) & 1) + ((i >> 15) & 1) + ((i >> 16) & 1);
+
+            for (int sub=0; sub<(1<<6); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<6; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_2x3_top[patternIdx] &= i;
-                valid_mask_OR_2x3_top[patternIdx] |= i;
+                valid_mask_AND_2x3_top[patternIdx] &= comp_AND;
+                valid_mask_OR_2x3_top[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 2x3 BOTTOM LUT
+    // GENERATE 2X3_BOTTOM LUT
     for (int i=0; i<(1<<17); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 3 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (9 + (r) * 4 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=2; r++) {
-            for (int c=0; c<=3; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 2) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 3) sum += H_BIT(r, c);
-                
-                // Bottom boundary condition: no edges go DOWN from r=2
-                if (r == 2 && (c == 1 || c == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else if (r == 1 && (c == 1 || c == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 2) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 12) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 13) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 4) & 1) + ((i >> 10) & 1) + ((i >> 14) & 1)) == 1 || (((i >> 3) & 1) + ((i >> 4) & 1) + ((i >> 10) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 11) & 1) + ((i >> 15) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 11) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 13) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 14) & 1)) == 1 || (((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 7) & 1) + ((i >> 8) & 1) + ((i >> 15) & 1)) == 1 || (((i >> 7) & 1) + ((i >> 8) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 8) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[6];
-            for (int r=0; r<2; r++) {
-                for (int c=0; c<3; c++) {
-                    clue_arr[r*3+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 10) & 1) == 1) base_state |= (1U << 17);
+            if (((i >> 1) & 1) + ((i >> 2) & 1) + ((i >> 11) & 1) == 1) base_state |= (1U << 18);
+            if (((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 13) & 1) == 1) base_state |= (1U << 19);
+            if (((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 16) & 1) == 1) base_state |= (1U << 20);
+            if (((i >> 6) & 1) + ((i >> 13) & 1) == 1) base_state |= (1U << 21);
+            if (((i >> 8) & 1) + ((i >> 16) & 1) == 1) base_state |= (1U << 22);
+            int corner_sums[2];
+            corner_sums[0] = ((i >> 0) & 1) + ((i >> 9) & 1);
+            corner_sums[1] = ((i >> 2) & 1) + ((i >> 12) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 23; int cb2_0 = 24;
+            int cb1_1 = 25; int cb2_1 = 26;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                for (int i1=0; i1<num_pairs[corner_sums[1]]; i1++) {
+                    uint32_t s1 = s0 | ((uint32_t)pairs[corner_sums[1]][i1][0] << cb1_1) | ((uint32_t)pairs[corner_sums[1]][i1][1] << cb2_1);
+                    comp_AND &= s1;
+                    comp_OR |= s1;
                 }
             }
-            for (int sub=0; sub<64; sub++) {
+
+            int clue_arr[6];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 4) & 1) + ((i >> 10) & 1) + ((i >> 11) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 5) & 1) + ((i >> 11) & 1) + ((i >> 12) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 6) & 1) + ((i >> 13) & 1) + ((i >> 14) & 1);
+            clue_arr[4] = ((i >> 4) & 1) + ((i >> 7) & 1) + ((i >> 14) & 1) + ((i >> 15) & 1);
+            clue_arr[5] = ((i >> 5) & 1) + ((i >> 8) & 1) + ((i >> 15) & 1) + ((i >> 16) & 1);
+
+            for (int sub=0; sub<(1<<6); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<6; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_2x3_bottom[patternIdx] &= i;
-                valid_mask_OR_2x3_bottom[patternIdx] |= i;
+                valid_mask_AND_2x3_bottom[patternIdx] &= comp_AND;
+                valid_mask_OR_2x3_bottom[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 3x2 LEFT LUT
+    // GENERATE 3X2_LEFT LUT
     for (int i=0; i<(1<<17); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 2 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (8 + (r) * 3 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=3; r++) {
-            for (int c=0; c<=2; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 3) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 2) sum += H_BIT(r, c);
-                
-                // Left boundary condition: no edges go LEFT from c=0
-                if (c == 0 && (r == 1 || r == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else if (c == 1 && (r == 1 || r == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 8) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 12) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 12) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 10) & 1) + ((i >> 13) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 11) & 1) + ((i >> 14) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 11) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 15) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 13) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 7) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[6];
-            for (int r=0; r<3; r++) {
-                for (int c=0; c<2; c++) {
-                    clue_arr[r*2+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 8) & 1) == 1) base_state |= (1U << 17);
+            if (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 18);
+            if (((i >> 3) & 1) + ((i >> 10) & 1) + ((i >> 13) & 1) == 1) base_state |= (1U << 19);
+            if (((i >> 5) & 1) + ((i >> 13) & 1) + ((i >> 16) & 1) == 1) base_state |= (1U << 20);
+            if (((i >> 6) & 1) + ((i >> 14) & 1) == 1) base_state |= (1U << 21);
+            if (((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 15) & 1) == 1) base_state |= (1U << 22);
+            int corner_sums[2];
+            corner_sums[0] = ((i >> 1) & 1) + ((i >> 10) & 1);
+            corner_sums[1] = ((i >> 7) & 1) + ((i >> 16) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 23; int cb2_0 = 24;
+            int cb1_1 = 25; int cb2_1 = 26;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                for (int i1=0; i1<num_pairs[corner_sums[1]]; i1++) {
+                    uint32_t s1 = s0 | ((uint32_t)pairs[corner_sums[1]][i1][0] << cb1_1) | ((uint32_t)pairs[corner_sums[1]][i1][1] << cb2_1);
+                    comp_AND &= s1;
+                    comp_OR |= s1;
                 }
             }
-            for (int sub=0; sub<64; sub++) {
+
+            int clue_arr[6];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 2) & 1) + ((i >> 8) & 1) + ((i >> 9) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 4) & 1) + ((i >> 11) & 1) + ((i >> 12) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 13) & 1);
+            clue_arr[4] = ((i >> 4) & 1) + ((i >> 6) & 1) + ((i >> 14) & 1) + ((i >> 15) & 1);
+            clue_arr[5] = ((i >> 5) & 1) + ((i >> 7) & 1) + ((i >> 15) & 1) + ((i >> 16) & 1);
+
+            for (int sub=0; sub<(1<<6); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<6; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_3x2_left[patternIdx] &= i;
-                valid_mask_OR_3x2_left[patternIdx] |= i;
+                valid_mask_AND_3x2_left[patternIdx] &= comp_AND;
+                valid_mask_OR_3x2_left[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 3x2 RIGHT LUT
+    // GENERATE 3X2_RIGHT LUT
     for (int i=0; i<(1<<17); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 2 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (8 + (r) * 3 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=3; r++) {
-            for (int c=0; c<=2; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 3) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 2) sum += H_BIT(r, c);
-                
-                // Right boundary condition: no edges go RIGHT from c=2
-                if (c == 2 && (r == 1 || r == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else if (c == 1 && (r == 1 || r == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 8) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 12) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 12) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 10) & 1) + ((i >> 13) & 1)) == 1 || (((i >> 3) & 1) + ((i >> 10) & 1) + ((i >> 13) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 11) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 15) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 13) & 1) + ((i >> 16) & 1)) == 1 || (((i >> 5) & 1) + ((i >> 13) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 14) & 1)) > 2) invalid = true;
+        if ((((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 15) & 1)) > 2) invalid = true;
+        if ((((i >> 7) & 1) + ((i >> 16) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[6];
-            for (int r=0; r<3; r++) {
-                for (int c=0; c<2; c++) {
-                    clue_arr[r*2+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 17);
+            if (((i >> 1) & 1) + ((i >> 10) & 1) == 1) base_state |= (1U << 18);
+            if (((i >> 2) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1) == 1) base_state |= (1U << 19);
+            if (((i >> 4) & 1) + ((i >> 11) & 1) + ((i >> 14) & 1) == 1) base_state |= (1U << 20);
+            if (((i >> 6) & 1) + ((i >> 7) & 1) + ((i >> 15) & 1) == 1) base_state |= (1U << 21);
+            if (((i >> 7) & 1) + ((i >> 16) & 1) == 1) base_state |= (1U << 22);
+            int corner_sums[2];
+            corner_sums[0] = ((i >> 0) & 1) + ((i >> 8) & 1);
+            corner_sums[1] = ((i >> 6) & 1) + ((i >> 14) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 23; int cb2_0 = 24;
+            int cb1_1 = 25; int cb2_1 = 26;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                for (int i1=0; i1<num_pairs[corner_sums[1]]; i1++) {
+                    uint32_t s1 = s0 | ((uint32_t)pairs[corner_sums[1]][i1][0] << cb1_1) | ((uint32_t)pairs[corner_sums[1]][i1][1] << cb2_1);
+                    comp_AND &= s1;
+                    comp_OR |= s1;
                 }
             }
-            for (int sub=0; sub<64; sub++) {
+
+            int clue_arr[6];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 2) & 1) + ((i >> 8) & 1) + ((i >> 9) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 3) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 4) & 1) + ((i >> 11) & 1) + ((i >> 12) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 5) & 1) + ((i >> 12) & 1) + ((i >> 13) & 1);
+            clue_arr[4] = ((i >> 4) & 1) + ((i >> 6) & 1) + ((i >> 14) & 1) + ((i >> 15) & 1);
+            clue_arr[5] = ((i >> 5) & 1) + ((i >> 7) & 1) + ((i >> 15) & 1) + ((i >> 16) & 1);
+
+            for (int sub=0; sub<(1<<6); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<6; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_3x2_right[patternIdx] &= i;
-                valid_mask_OR_3x2_right[patternIdx] |= i;
+                valid_mask_AND_3x2_right[patternIdx] &= comp_AND;
+                valid_mask_OR_3x2_right[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 2x2 TOP-LEFT LUT
+    // GENERATE 2X2_TL LUT
     for (int i=0; i<(1<<12); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 2 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (6 + (r) * 3 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=2; r++) {
-            for (int c=0; c<=2; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 2) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 2) sum += H_BIT(r, c);
-                
-                if ((r == 0 || r == 1) && (c == 0 || c == 1)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 6) & 1)) == 1 || (((i >> 0) & 1) + ((i >> 6) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1)) == 1 || (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 8) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[4];
-            for (int r=0; r<2; r++) {
-                for (int c=0; c<2; c++) {
-                    clue_arr[r*2+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
-                }
+            uint32_t base_state = i;
+            if (((i >> 1) & 1) + ((i >> 8) & 1) == 1) base_state |= (1U << 12);
+            if (((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1) == 1) base_state |= (1U << 13);
+            if (((i >> 4) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 14);
+            if (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1) == 1) base_state |= (1U << 15);
+            int corner_sums[1];
+            corner_sums[0] = ((i >> 5) & 1) + ((i >> 11) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 16; int cb2_0 = 17;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                comp_AND &= s0;
+                comp_OR |= s0;
             }
-            for (int sub=0; sub<16; sub++) {
+
+            int clue_arr[4];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 7) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 8) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 4) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1) + ((i >> 11) & 1);
+
+            for (int sub=0; sub<(1<<4); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<4; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_2x2_tl[patternIdx] &= i;
-                valid_mask_OR_2x2_tl[patternIdx] |= i;
+                valid_mask_AND_2x2_tl[patternIdx] &= comp_AND;
+                valid_mask_OR_2x2_tl[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 2x2 TOP-RIGHT LUT
+    // GENERATE 2X2_TR LUT
     for (int i=0; i<(1<<12); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 2 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (6 + (r) * 3 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=2; r++) {
-            for (int c=0; c<=2; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 2) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 2) sum += H_BIT(r, c);
-                
-                if ((r == 0 || r == 1) && (c == 1 || c == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 6) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1)) == 1 || (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 8) & 1)) == 1 || (((i >> 1) & 1) + ((i >> 8) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) == 1 || (((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[4];
-            for (int r=0; r<2; r++) {
-                for (int c=0; c<2; c++) {
-                    clue_arr[r*2+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
-                }
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 6) & 1) == 1) base_state |= (1U << 12);
+            if (((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 13);
+            if (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1) == 1) base_state |= (1U << 14);
+            if (((i >> 5) & 1) + ((i >> 11) & 1) == 1) base_state |= (1U << 15);
+            int corner_sums[1];
+            corner_sums[0] = ((i >> 4) & 1) + ((i >> 9) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 16; int cb2_0 = 17;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                comp_AND &= s0;
+                comp_OR |= s0;
             }
-            for (int sub=0; sub<16; sub++) {
+
+            int clue_arr[4];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 7) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 8) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 4) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1) + ((i >> 11) & 1);
+
+            for (int sub=0; sub<(1<<4); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<4; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_2x2_tr[patternIdx] &= i;
-                valid_mask_OR_2x2_tr[patternIdx] |= i;
+                valid_mask_AND_2x2_tr[patternIdx] &= comp_AND;
+                valid_mask_OR_2x2_tr[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 2x2 BOTTOM-LEFT LUT
+    // GENERATE 2X2_BL LUT
     for (int i=0; i<(1<<12); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 2 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (6 + (r) * 3 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=2; r++) {
-            for (int c=0; c<=2; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 2) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 2) sum += H_BIT(r, c);
-                
-                if ((r == 1 || r == 2) && (c == 0 || c == 1)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 6) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 8) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 9) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[4];
-            for (int r=0; r<2; r++) {
-                for (int c=0; c<2; c++) {
-                    clue_arr[r*2+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
-                }
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 6) & 1) == 1) base_state |= (1U << 12);
+            if (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1) == 1) base_state |= (1U << 13);
+            if (((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1) == 1) base_state |= (1U << 14);
+            if (((i >> 5) & 1) + ((i >> 11) & 1) == 1) base_state |= (1U << 15);
+            int corner_sums[1];
+            corner_sums[0] = ((i >> 1) & 1) + ((i >> 8) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 16; int cb2_0 = 17;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                comp_AND &= s0;
+                comp_OR |= s0;
             }
-            for (int sub=0; sub<16; sub++) {
+
+            int clue_arr[4];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 7) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 8) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 4) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1) + ((i >> 11) & 1);
+
+            for (int sub=0; sub<(1<<4); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<4; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_2x2_bl[patternIdx] &= i;
-                valid_mask_OR_2x2_bl[patternIdx] |= i;
+                valid_mask_AND_2x2_bl[patternIdx] &= comp_AND;
+                valid_mask_OR_2x2_bl[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
-
-    // GENERATE 2x2 BOTTOM-RIGHT LUT
+    // GENERATE 2X2_BR LUT
     for (int i=0; i<(1<<12); i++) {
-        #define H_BIT(r, c) ((i >> ((r) * 2 + (c))) & 1)
-        #define V_BIT(r, c) ((i >> (6 + (r) * 3 + (c))) & 1)
         bool invalid = false;
-        for (int r=0; r<=2; r++) {
-            for (int c=0; c<=2; c++) {
-                int sum = 0;
-                if (r > 0) sum += V_BIT(r - 1, c);
-                if (r < 2) sum += V_BIT(r, c);
-                if (c > 0) sum += H_BIT(r, c - 1);
-                if (c < 2) sum += H_BIT(r, c);
-                
-                if ((r == 1 || r == 2) && (c == 1 || c == 2)) {
-                    if (sum != 0 && sum != 2) { invalid = true; break; }
-                } else {
-                    if (sum > 2) { invalid = true; break; }
-                }
-            }
-            if (invalid) break;
-        }
+        if ((((i >> 0) & 1) + ((i >> 6) & 1)) > 2) invalid = true;
+        if ((((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1)) > 2) invalid = true;
+        if ((((i >> 1) & 1) + ((i >> 8) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 2) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) == 1 || (((i >> 3) & 1) + ((i >> 8) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 9) & 1)) > 2) invalid = true;
+        if ((((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1)) == 1 || (((i >> 4) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1)) > 2) invalid = true;
+        if ((((i >> 5) & 1) + ((i >> 11) & 1)) == 1 || (((i >> 5) & 1) + ((i >> 11) & 1)) > 2) invalid = true;
         if (!invalid) {
-            int clue_arr[4];
-            for (int r=0; r<2; r++) {
-                for (int c=0; c<2; c++) {
-                    clue_arr[r*2+c] = H_BIT(r, c) + H_BIT(r+1, c) + V_BIT(r, c) + V_BIT(r, c+1);
-                }
+            uint32_t base_state = i;
+            if (((i >> 0) & 1) + ((i >> 1) & 1) + ((i >> 7) & 1) == 1) base_state |= (1U << 12);
+            if (((i >> 1) & 1) + ((i >> 8) & 1) == 1) base_state |= (1U << 13);
+            if (((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 14);
+            if (((i >> 4) & 1) + ((i >> 9) & 1) == 1) base_state |= (1U << 15);
+            int corner_sums[1];
+            corner_sums[0] = ((i >> 0) & 1) + ((i >> 6) & 1);
+
+            int pairs[3][2][2] = {
+                {{0,0}, {1,1}}, 
+                {{0,1}, {1,0}}, 
+                {{0,0}, {0,0}}  
+            };
+            int num_pairs[3] = {2, 2, 1};
+            
+            int cb1_0 = 16; int cb2_0 = 17;
+            uint32_t comp_AND = 0xFFFFFFFF;
+            uint32_t comp_OR = 0;
+            for (int i0=0; i0<num_pairs[corner_sums[0]]; i0++) {
+                uint32_t s0 = base_state | ((uint32_t)pairs[corner_sums[0]][i0][0] << cb1_0) | ((uint32_t)pairs[corner_sums[0]][i0][1] << cb2_0);
+                comp_AND &= s0;
+                comp_OR |= s0;
             }
-            for (int sub=0; sub<16; sub++) {
+
+            int clue_arr[4];
+
+            clue_arr[0] = ((i >> 0) & 1) + ((i >> 2) & 1) + ((i >> 6) & 1) + ((i >> 7) & 1);
+            clue_arr[1] = ((i >> 1) & 1) + ((i >> 3) & 1) + ((i >> 7) & 1) + ((i >> 8) & 1);
+            clue_arr[2] = ((i >> 2) & 1) + ((i >> 4) & 1) + ((i >> 9) & 1) + ((i >> 10) & 1);
+            clue_arr[3] = ((i >> 3) & 1) + ((i >> 5) & 1) + ((i >> 10) & 1) + ((i >> 11) & 1);
+
+            for (int sub=0; sub<(1<<4); sub++) {
                 int patternIdx = 0;
                 for (int cell=0; cell<4; cell++) {
                     if ((sub >> cell) & 1) patternIdx += 4 * pow5[cell];
                     else patternIdx += clue_arr[cell] * pow5[cell];
                 }
-                valid_mask_AND_2x2_br[patternIdx] &= i;
-                valid_mask_OR_2x2_br[patternIdx] |= i;
+                valid_mask_AND_2x2_br[patternIdx] &= comp_AND;
+                valid_mask_OR_2x2_br[patternIdx] |= comp_OR;
             }
+        
         }
-        #undef H_BIT
-        #undef V_BIT
     }
 }
 
 
+
+static inline bool applyLutEdge(int edgeIdx, int8_t state, bool* deduced) {
+    if (edgeStates[edgeIdx] == 0) {
+        if (!setEdgeState(edgeIdx, state)) return false;
+        *deduced = true;
+    } else {
+        if (!setEdgeState(edgeIdx, state)) return false;
+    }
+    return true;
+}
+
+#define APPLY_LUT_EDGE(fl, fc, bit, edgeIdx) \
+    do { \
+        if (((fl) >> (bit)) & 1) { \
+            bool d = false; \
+            if (!applyLutEdge(edgeIdx, 1, &d)) return false; \
+            if (d && enable_deduction_logging) return true; \
+        } \
+        if (!(((fc) >> (bit)) & 1)) { \
+            bool d = false; \
+            if (!applyLutEdge(edgeIdx, -1, &d)) return false; \
+            if (d && enable_deduction_logging) return true; \
+        } \
+    } while(0)
+
 bool applyBoundaryLUTs() {
+
     if (valid_mask_AND_2x3_top == NULL) return true;
     int pow5[] = {1, 5, 25, 125, 625, 3125, 15625, 78125, 390625};
 
-    // TOP EDGE (2x3)
-    if (rows >= 2 && cols >= 3) {
-        for (int c = 0; c <= cols - 3; c++) {
+    // APPLY 2X3_TOP
+    if (rows >= 2) { int r = 0;
+        if (cols >= 3) for (int c = 0; c <= cols - 3; c++) {
+
             int patternIdx = 0;
             for (int dr = 0; dr < 2; dr++) {
                 for (int dc = 0; dc < 3; dc++) {
-                    int clue = clues[dr * cols + (c + dc)];
+                    int clue = clues[(r + dr) * cols + (c + dc)];
                     if (clue == -1) clue = 4;
                     patternIdx += clue * pow5[dr * 3 + dc];
                 }
             }
             uint32_t fl = valid_mask_AND_2x3_top[patternIdx];
             uint32_t fc = valid_mask_OR_2x3_top[patternIdx];
-            for (int dr = 0; dr < 3; dr++) {
-                for (int dc = 0; dc < 3; dc++) {
-                    int bit = dr * 3 + dc;
-                    int edgeIdx = getHEdgeIndex(dr, c + dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-                }
-            }
-            for (int dr = 0; dr < 2; dr++) {
-                for (int dc = 0; dc < 4; dc++) {
-                    int bit = 9 + dr * 4 + dc;
-                    int edgeIdx = getVEdgeIndex(dr, c + dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-                }
-            }
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 1, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 6, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getHEdgeIndex(r + 2, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 12, getVEdgeIndex(r + 0, c + 3));
+            APPLY_LUT_EDGE(fl, fc, 13, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 14, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 15, getVEdgeIndex(r + 1, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 16, getVEdgeIndex(r + 1, c + 3));
+            if (r+0 >= 0 && r+0 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 17, getHEdgeIndex(r + 0, c + -1));
+            if (r+0 >= 0 && r+0 <= rows && c+3 >= 0 && c+3 < cols) APPLY_LUT_EDGE(fl, fc, 18, getHEdgeIndex(r + 0, c + 3));
+            if (r+1 >= 0 && r+1 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 19, getHEdgeIndex(r + 1, c + -1));
+            if (r+1 >= 0 && r+1 <= rows && c+3 >= 0 && c+3 < cols) APPLY_LUT_EDGE(fl, fc, 20, getHEdgeIndex(r + 1, c + 3));
+            if (r+2 >= 0 && r+2 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 21, getVEdgeIndex(r + 2, c + 1));
+            if (r+2 >= 0 && r+2 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 22, getVEdgeIndex(r + 2, c + 2));
+            if (r+2 >= 0 && r+2 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 23, getHEdgeIndex(r + 2, c + -1));
+            if (r+2 >= 0 && r+2 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 24, getVEdgeIndex(r + 2, c + 0));
+            if (r+2 >= 0 && r+2 <= rows && c+3 >= 0 && c+3 < cols) APPLY_LUT_EDGE(fl, fc, 25, getHEdgeIndex(r + 2, c + 3));
+            if (r+2 >= 0 && r+2 < rows && c+3 >= 0 && c+3 <= cols) APPLY_LUT_EDGE(fl, fc, 26, getVEdgeIndex(r + 2, c + 3));
         }
     }
+    // APPLY 2X3_BOTTOM
+    if (rows >= 2) { int r = rows - 2; if (r < 0) return true;
+        if (cols >= 3) for (int c = 0; c <= cols - 3; c++) {
 
-    // BOTTOM EDGE (2x3)
-    if (rows >= 2 && cols >= 3) {
-        int r = rows - 2;
-        for (int c = 0; c <= cols - 3; c++) {
             int patternIdx = 0;
             for (int dr = 0; dr < 2; dr++) {
                 for (int dc = 0; dc < 3; dc++) {
@@ -613,61 +810,84 @@ bool applyBoundaryLUTs() {
             }
             uint32_t fl = valid_mask_AND_2x3_bottom[patternIdx];
             uint32_t fc = valid_mask_OR_2x3_bottom[patternIdx];
-            for (int dr = 0; dr < 3; dr++) {
-                for (int dc = 0; dc < 3; dc++) {
-                    int bit = dr * 3 + dc;
-                    int edgeIdx = getHEdgeIndex(r + dr, c + dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-                }
-            }
-            for (int dr = 0; dr < 2; dr++) {
-                for (int dc = 0; dc < 4; dc++) {
-                    int bit = 9 + dr * 4 + dc;
-                    int edgeIdx = getVEdgeIndex(r + dr, c + dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-                }
-            }
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 1, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 6, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getHEdgeIndex(r + 2, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 12, getVEdgeIndex(r + 0, c + 3));
+            APPLY_LUT_EDGE(fl, fc, 13, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 14, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 15, getVEdgeIndex(r + 1, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 16, getVEdgeIndex(r + 1, c + 3));
+            if (r+-1 >= 0 && r+-1 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + -1, c + 1));
+            if (r+-1 >= 0 && r+-1 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 18, getVEdgeIndex(r + -1, c + 2));
+            if (r+1 >= 0 && r+1 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 19, getHEdgeIndex(r + 1, c + -1));
+            if (r+1 >= 0 && r+1 <= rows && c+3 >= 0 && c+3 < cols) APPLY_LUT_EDGE(fl, fc, 20, getHEdgeIndex(r + 1, c + 3));
+            if (r+2 >= 0 && r+2 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 21, getHEdgeIndex(r + 2, c + -1));
+            if (r+2 >= 0 && r+2 <= rows && c+3 >= 0 && c+3 < cols) APPLY_LUT_EDGE(fl, fc, 22, getHEdgeIndex(r + 2, c + 3));
+            if (r+0 >= 0 && r+0 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 23, getHEdgeIndex(r + 0, c + -1));
+            if (r+-1 >= 0 && r+-1 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 24, getVEdgeIndex(r + -1, c + 0));
+            if (r+0 >= 0 && r+0 <= rows && c+3 >= 0 && c+3 < cols) APPLY_LUT_EDGE(fl, fc, 25, getHEdgeIndex(r + 0, c + 3));
+            if (r+-1 >= 0 && r+-1 < rows && c+3 >= 0 && c+3 <= cols) APPLY_LUT_EDGE(fl, fc, 26, getVEdgeIndex(r + -1, c + 3));
         }
     }
+    // APPLY 3X2_LEFT
+    if (rows >= 3) for (int r = 0; r <= rows - 3; r++) {
+        if (cols >= 2) { int c = 0;
 
-    // LEFT EDGE (3x2)
-    if (rows >= 3 && cols >= 2) {
-        for (int r = 0; r <= rows - 3; r++) {
             int patternIdx = 0;
             for (int dr = 0; dr < 3; dr++) {
                 for (int dc = 0; dc < 2; dc++) {
-                    int clue = clues[(r + dr) * cols + dc];
+                    int clue = clues[(r + dr) * cols + (c + dc)];
                     if (clue == -1) clue = 4;
                     patternIdx += clue * pow5[dr * 2 + dc];
                 }
             }
             uint32_t fl = valid_mask_AND_3x2_left[patternIdx];
             uint32_t fc = valid_mask_OR_3x2_left[patternIdx];
-            for (int dr = 0; dr < 4; dr++) {
-                for (int dc = 0; dc < 2; dc++) {
-                    int bit = dr * 2 + dc;
-                    int edgeIdx = getHEdgeIndex(r + dr, dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-                }
-            }
-            for (int dr = 0; dr < 3; dr++) {
-                for (int dc = 0; dc < 3; dc++) {
-                    int bit = 8 + dr * 3 + dc;
-                    int edgeIdx = getVEdgeIndex(r + dr, dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-                }
-            }
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 6, getHEdgeIndex(r + 3, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getHEdgeIndex(r + 3, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 12, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 13, getVEdgeIndex(r + 1, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 14, getVEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 15, getVEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 16, getVEdgeIndex(r + 2, c + 2));
+            if (r+-1 >= 0 && r+-1 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + -1, c + 0));
+            if (r+-1 >= 0 && r+-1 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 18, getVEdgeIndex(r + -1, c + 1));
+            if (r+1 >= 0 && r+1 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 19, getHEdgeIndex(r + 1, c + 2));
+            if (r+2 >= 0 && r+2 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 20, getHEdgeIndex(r + 2, c + 2));
+            if (r+3 >= 0 && r+3 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 21, getVEdgeIndex(r + 3, c + 0));
+            if (r+3 >= 0 && r+3 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 22, getVEdgeIndex(r + 3, c + 1));
+            if (r+0 >= 0 && r+0 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 23, getHEdgeIndex(r + 0, c + 2));
+            if (r+-1 >= 0 && r+-1 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 24, getVEdgeIndex(r + -1, c + 2));
+            if (r+3 >= 0 && r+3 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 25, getHEdgeIndex(r + 3, c + 2));
+            if (r+3 >= 0 && r+3 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 26, getVEdgeIndex(r + 3, c + 2));
         }
     }
+    // APPLY 3X2_RIGHT
+    if (rows >= 3) for (int r = 0; r <= rows - 3; r++) {
+        if (cols >= 2) { int c = cols - 2; if (c < 0) return true;
 
-    // RIGHT EDGE (3x2)
-    if (rows >= 3 && cols >= 2) {
-        int c = cols - 2;
-        for (int r = 0; r <= rows - 3; r++) {
             int patternIdx = 0;
             for (int dr = 0; dr < 3; dr++) {
                 for (int dc = 0; dc < 2; dc++) {
@@ -678,149 +898,176 @@ bool applyBoundaryLUTs() {
             }
             uint32_t fl = valid_mask_AND_3x2_right[patternIdx];
             uint32_t fc = valid_mask_OR_3x2_right[patternIdx];
-            for (int dr = 0; dr < 4; dr++) {
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 6, getHEdgeIndex(r + 3, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getHEdgeIndex(r + 3, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 12, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 13, getVEdgeIndex(r + 1, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 14, getVEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 15, getVEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 16, getVEdgeIndex(r + 2, c + 2));
+            if (r+-1 >= 0 && r+-1 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + -1, c + 1));
+            if (r+-1 >= 0 && r+-1 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 18, getVEdgeIndex(r + -1, c + 2));
+            if (r+1 >= 0 && r+1 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 19, getHEdgeIndex(r + 1, c + -1));
+            if (r+2 >= 0 && r+2 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 20, getHEdgeIndex(r + 2, c + -1));
+            if (r+3 >= 0 && r+3 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 21, getVEdgeIndex(r + 3, c + 1));
+            if (r+3 >= 0 && r+3 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 22, getVEdgeIndex(r + 3, c + 2));
+            if (r+0 >= 0 && r+0 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 23, getHEdgeIndex(r + 0, c + -1));
+            if (r+-1 >= 0 && r+-1 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 24, getVEdgeIndex(r + -1, c + 0));
+            if (r+3 >= 0 && r+3 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 25, getHEdgeIndex(r + 3, c + -1));
+            if (r+3 >= 0 && r+3 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 26, getVEdgeIndex(r + 3, c + 0));
+        }
+    }
+    // APPLY 2X2_TL
+    if (rows >= 2) { int r = 0;
+        if (cols >= 2) { int c = 0;
+
+            int patternIdx = 0;
+            for (int dr = 0; dr < 2; dr++) {
                 for (int dc = 0; dc < 2; dc++) {
-                    int bit = dr * 2 + dc;
-                    int edgeIdx = getHEdgeIndex(r + dr, c + dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
+                    int clue = clues[(r + dr) * cols + (c + dc)];
+                    if (clue == -1) clue = 4;
+                    patternIdx += clue * pow5[dr * 2 + dc];
                 }
             }
-            for (int dr = 0; dr < 3; dr++) {
-                for (int dc = 0; dc < 3; dc++) {
-                    int bit = 8 + dr * 3 + dc;
-                    int edgeIdx = getVEdgeIndex(r + dr, c + dc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
+            uint32_t fl = valid_mask_AND_2x2_tl[patternIdx];
+            uint32_t fc = valid_mask_OR_2x2_tl[patternIdx];
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 6, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 1, c + 2));
+            if (r+0 >= 0 && r+0 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 12, getHEdgeIndex(r + 0, c + 2));
+            if (r+1 >= 0 && r+1 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 13, getHEdgeIndex(r + 1, c + 2));
+            if (r+2 >= 0 && r+2 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 14, getVEdgeIndex(r + 2, c + 0));
+            if (r+2 >= 0 && r+2 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 15, getVEdgeIndex(r + 2, c + 1));
+            if (r+2 >= 0 && r+2 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 16, getHEdgeIndex(r + 2, c + 2));
+            if (r+2 >= 0 && r+2 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + 2, c + 2));
+        }
+    }
+    // APPLY 2X2_TR
+    if (rows >= 2) { int r = 0;
+        if (cols >= 2) { int c = cols - 2; if (c < 0) return true;
+
+            int patternIdx = 0;
+            for (int dr = 0; dr < 2; dr++) {
+                for (int dc = 0; dc < 2; dc++) {
+                    int clue = clues[(r + dr) * cols + (c + dc)];
+                    if (clue == -1) clue = 4;
+                    patternIdx += clue * pow5[dr * 2 + dc];
                 }
             }
+            uint32_t fl = valid_mask_AND_2x2_tr[patternIdx];
+            uint32_t fc = valid_mask_OR_2x2_tr[patternIdx];
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 6, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 1, c + 2));
+            if (r+0 >= 0 && r+0 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 12, getHEdgeIndex(r + 0, c + -1));
+            if (r+1 >= 0 && r+1 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 13, getHEdgeIndex(r + 1, c + -1));
+            if (r+2 >= 0 && r+2 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 14, getVEdgeIndex(r + 2, c + 1));
+            if (r+2 >= 0 && r+2 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 15, getVEdgeIndex(r + 2, c + 2));
+            if (r+2 >= 0 && r+2 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 16, getHEdgeIndex(r + 2, c + -1));
+            if (r+2 >= 0 && r+2 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + 2, c + 0));
         }
     }
+    // APPLY 2X2_BL
+    if (rows >= 2) { int r = rows - 2; if (r < 0) return true;
+        if (cols >= 2) { int c = 0;
 
-    // TOP-LEFT CORNER (2x2)
-    if (rows >= 2 && cols >= 2) {
-        int patternIdx = 0;
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int clue = clues[dr * cols + dc];
-                if (clue == -1) clue = 4;
-                patternIdx += clue * pow5[dr * 2 + dc];
+            int patternIdx = 0;
+            for (int dr = 0; dr < 2; dr++) {
+                for (int dc = 0; dc < 2; dc++) {
+                    int clue = clues[(r + dr) * cols + (c + dc)];
+                    if (clue == -1) clue = 4;
+                    patternIdx += clue * pow5[dr * 2 + dc];
+                }
             }
-        }
-        uint16_t fl = valid_mask_AND_2x2_tl[patternIdx];
-        uint16_t fc = valid_mask_OR_2x2_tl[patternIdx];
-        for (int dr = 0; dr < 3; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int bit = dr * 2 + dc;
-                int edgeIdx = getHEdgeIndex(dr, dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
-        }
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 3; dc++) {
-                int bit = 6 + dr * 3 + dc;
-                int edgeIdx = getVEdgeIndex(dr, dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
+            uint32_t fl = valid_mask_AND_2x2_bl[patternIdx];
+            uint32_t fc = valid_mask_OR_2x2_bl[patternIdx];
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 6, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 1, c + 2));
+            if (r+-1 >= 0 && r+-1 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 12, getVEdgeIndex(r + -1, c + 0));
+            if (r+-1 >= 0 && r+-1 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 13, getVEdgeIndex(r + -1, c + 1));
+            if (r+1 >= 0 && r+1 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 14, getHEdgeIndex(r + 1, c + 2));
+            if (r+2 >= 0 && r+2 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 15, getHEdgeIndex(r + 2, c + 2));
+            if (r+0 >= 0 && r+0 <= rows && c+2 >= 0 && c+2 < cols) APPLY_LUT_EDGE(fl, fc, 16, getHEdgeIndex(r + 0, c + 2));
+            if (r+-1 >= 0 && r+-1 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + -1, c + 2));
         }
     }
+    // APPLY 2X2_BR
+    if (rows >= 2) { int r = rows - 2; if (r < 0) return true;
+        if (cols >= 2) { int c = cols - 2; if (c < 0) return true;
 
-    // TOP-RIGHT CORNER (2x2)
-    if (rows >= 2 && cols >= 2) {
-        int c = cols - 2;
-        int patternIdx = 0;
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int clue = clues[dr * cols + (c + dc)];
-                if (clue == -1) clue = 4;
-                patternIdx += clue * pow5[dr * 2 + dc];
+            int patternIdx = 0;
+            for (int dr = 0; dr < 2; dr++) {
+                for (int dc = 0; dc < 2; dc++) {
+                    int clue = clues[(r + dr) * cols + (c + dc)];
+                    if (clue == -1) clue = 4;
+                    patternIdx += clue * pow5[dr * 2 + dc];
+                }
             }
-        }
-        uint16_t fl = valid_mask_AND_2x2_tr[patternIdx];
-        uint16_t fc = valid_mask_OR_2x2_tr[patternIdx];
-        for (int dr = 0; dr < 3; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int bit = dr * 2 + dc;
-                int edgeIdx = getHEdgeIndex(dr, c + dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
-        }
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 3; dc++) {
-                int bit = 6 + dr * 3 + dc;
-                int edgeIdx = getVEdgeIndex(dr, c + dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
+            uint32_t fl = valid_mask_AND_2x2_br[patternIdx];
+            uint32_t fc = valid_mask_OR_2x2_br[patternIdx];
+        
+            APPLY_LUT_EDGE(fl, fc, 0, getHEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 1, getHEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 2, getHEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 3, getHEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 4, getHEdgeIndex(r + 2, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 5, getHEdgeIndex(r + 2, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 6, getVEdgeIndex(r + 0, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 7, getVEdgeIndex(r + 0, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 8, getVEdgeIndex(r + 0, c + 2));
+            APPLY_LUT_EDGE(fl, fc, 9, getVEdgeIndex(r + 1, c + 0));
+            APPLY_LUT_EDGE(fl, fc, 10, getVEdgeIndex(r + 1, c + 1));
+            APPLY_LUT_EDGE(fl, fc, 11, getVEdgeIndex(r + 1, c + 2));
+            if (r+-1 >= 0 && r+-1 < rows && c+1 >= 0 && c+1 <= cols) APPLY_LUT_EDGE(fl, fc, 12, getVEdgeIndex(r + -1, c + 1));
+            if (r+-1 >= 0 && r+-1 < rows && c+2 >= 0 && c+2 <= cols) APPLY_LUT_EDGE(fl, fc, 13, getVEdgeIndex(r + -1, c + 2));
+            if (r+1 >= 0 && r+1 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 14, getHEdgeIndex(r + 1, c + -1));
+            if (r+2 >= 0 && r+2 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 15, getHEdgeIndex(r + 2, c + -1));
+            if (r+0 >= 0 && r+0 <= rows && c+-1 >= 0 && c+-1 < cols) APPLY_LUT_EDGE(fl, fc, 16, getHEdgeIndex(r + 0, c + -1));
+            if (r+-1 >= 0 && r+-1 < rows && c+0 >= 0 && c+0 <= cols) APPLY_LUT_EDGE(fl, fc, 17, getVEdgeIndex(r + -1, c + 0));
         }
     }
-
-    // BOTTOM-LEFT CORNER (2x2)
-    if (rows >= 2 && cols >= 2) {
-        int r = rows - 2;
-        int patternIdx = 0;
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int clue = clues[(r + dr) * cols + dc];
-                if (clue == -1) clue = 4;
-                patternIdx += clue * pow5[dr * 2 + dc];
-            }
-        }
-        uint16_t fl = valid_mask_AND_2x2_bl[patternIdx];
-        uint16_t fc = valid_mask_OR_2x2_bl[patternIdx];
-        for (int dr = 0; dr < 3; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int bit = dr * 2 + dc;
-                int edgeIdx = getHEdgeIndex(r + dr, dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
-        }
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 3; dc++) {
-                int bit = 6 + dr * 3 + dc;
-                int edgeIdx = getVEdgeIndex(r + dr, dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
-        }
-    }
-
-    // BOTTOM-RIGHT CORNER (2x2)
-    if (rows >= 2 && cols >= 2) {
-        int r = rows - 2;
-        int c = cols - 2;
-        int patternIdx = 0;
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int clue = clues[(r + dr) * cols + (c + dc)];
-                if (clue == -1) clue = 4;
-                patternIdx += clue * pow5[dr * 2 + dc];
-            }
-        }
-        uint16_t fl = valid_mask_AND_2x2_br[patternIdx];
-        uint16_t fc = valid_mask_OR_2x2_br[patternIdx];
-        for (int dr = 0; dr < 3; dr++) {
-            for (int dc = 0; dc < 2; dc++) {
-                int bit = dr * 2 + dc;
-                int edgeIdx = getHEdgeIndex(r + dr, c + dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
-        }
-        for (int dr = 0; dr < 2; dr++) {
-            for (int dc = 0; dc < 3; dc++) {
-                int bit = 6 + dr * 3 + dc;
-                int edgeIdx = getVEdgeIndex(r + dr, c + dc);
-                if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
-            }
-        }
-    }
-
     return true;
 }
 
@@ -860,10 +1107,12 @@ bool applyLUT() {
                     if (rr >= 0 && rr <= rows && cc >= 0 && cc < cols) {
                         int edgeIdx = getHEdgeIndex(rr, cc);
                         if ((fl >> bit) & 1) {
-                            if (!setEdgeState(edgeIdx, 1)) return false;
+                            
+                            if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, 1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, 1)) return false; }
                         }
                         if (!((fc >> bit) & 1)) {
-                            if (!setEdgeState(edgeIdx, -1)) return false;
+                            
+                            if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, -1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, -1)) return false; }
                         }
                     }
                 }
@@ -878,10 +1127,10 @@ bool applyLUT() {
                     if (rr >= 0 && rr < rows && cc >= 0 && cc <= cols) {
                         int edgeIdx = getVEdgeIndex(rr, cc);
                         if ((fl >> bit) & 1) {
-                            if (!setEdgeState(edgeIdx, 1)) return false;
+                            if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, 1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, 1)) return false; }
                         }
                         if (!((fc >> bit) & 1)) {
-                            if (!setEdgeState(edgeIdx, -1)) return false;
+                            if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, -1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, -1)) return false; }
                         }
                     }
                 }
@@ -894,8 +1143,8 @@ bool applyLUT() {
                 int cc = c + c_out;
                 if (rr >= 0 && rr < rows && cc >= 0 && cc <= cols) {
                     int edgeIdx = getVEdgeIndex(rr, cc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
+                    if ((fl >> bit) & 1) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, 1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, 1)) return false; } }
+                    if (!((fc >> bit) & 1)) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, -1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, -1)) return false; } }
                 }
             }
             // Apply Bottom outer edges (r=3, c=0..3 => V edges)
@@ -905,8 +1154,8 @@ bool applyLUT() {
                 int cc = c + c_out;
                 if (rr >= 0 && rr < rows && cc >= 0 && cc <= cols) {
                     int edgeIdx = getVEdgeIndex(rr, cc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
+                    if ((fl >> bit) & 1) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, 1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, 1)) return false; } }
+                    if (!((fc >> bit) & 1)) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, -1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, -1)) return false; } }
                 }
             }
             // Apply Left outer edges (r=0..3, c=-1 => H edges)
@@ -916,8 +1165,8 @@ bool applyLUT() {
                 int cc = c - 1;
                 if (rr >= 0 && rr <= rows && cc >= 0 && cc < cols) {
                     int edgeIdx = getHEdgeIndex(rr, cc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
+                    if ((fl >> bit) & 1) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, 1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, 1)) return false; } }
+                    if (!((fc >> bit) & 1)) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, -1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, -1)) return false; } }
                 }
             }
             // Apply Right outer edges (r=0..3, c=3 => H edges)
@@ -927,8 +1176,8 @@ bool applyLUT() {
                 int cc = c + 3;
                 if (rr >= 0 && rr <= rows && cc >= 0 && cc < cols) {
                     int edgeIdx = getHEdgeIndex(rr, cc);
-                    if ((fl >> bit) & 1) { if (!setEdgeState(edgeIdx, 1)) return false; }
-                    if (!((fc >> bit) & 1)) { if (!setEdgeState(edgeIdx, -1)) return false; }
+                    if ((fl >> bit) & 1) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, 1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, 1)) return false; } }
+                    if (!((fc >> bit) & 1)) { if (edgeStates[edgeIdx] == 0) { if (!setEdgeState(edgeIdx, -1)) return false; if (enable_deduction_logging) return true; } else { if (!setEdgeState(edgeIdx, -1)) return false; } }
                 }
             }
         }
