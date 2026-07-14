@@ -3764,8 +3764,8 @@ int check_human_solvability() {
         bool lookaheadFound = false;
         double t_lookahead_start = emscripten_get_now();
         
-                
-        for (int i = 0; i < numEdges; i++) {
+        if (lookaheadMaxLimit > 0) {        
+            for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
                 if (!isEdgeConstrained(i)) continue; // Prune unconstrained edges
                 
@@ -3866,6 +3866,7 @@ int check_human_solvability() {
                     break;
                 }
             }
+        }
         }
         perf_lookahead += emscripten_get_now() - t_lookahead_start;
         

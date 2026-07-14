@@ -2,8 +2,8 @@
 // Prevents UI thread blocking and browser freeze dialogs.
 
 // Import dependencies using absolute or relative paths with cache-busters
-const wasmVersion = 'v60';
-importScripts(`loopcourse.js?v=${wasmVersion}`, "solver.js?v=v52", "generator.js?v=v52");
+const wasmVersion = 'v61';
+importScripts(`loopcourse.js?v=${wasmVersion}`, `solver.js?v=${wasmVersion}`, `generator.js?v=${wasmVersion}`);
 
 self.onmessage = function(e) {
   const { rows, cols, difficulty } = e.data;
