@@ -66,8 +66,42 @@ async function main() {
         Module.HEAP8[cluesPtr + i] = parsedClues[i];
     }
 
-    console.log(`\n--- Running Analyzer on ${fileName} ---`);
+    console.log(`\\n--- Running Analyzer on ${fileName} ---`);
+    const start_time = performance.now();
     analyze_puzzle();
+    const end_time = performance.now();
+    
+    const get_perf_lookahead = Module.cwrap('get_perf_lookahead', 'number', []);
+    
+    // Fetch and aggregate all rule times
+    const get_ac3_rule_time = Module.cwrap('get_ac3_rule_time', 'number', ['number']);
+    const get_ac3_rule_hit_count = Module.cwrap('get_ac3_rule_hit_count', 'number', ['number']);
+    
+    const ruleTimes = [];
+    let totalAC3Time = 0;
+    
+    for (let id = 100; id <= 250; id++) {
+        const name = get_ac3_rule_name(id);
+        if (name) {
+            const time = get_ac3_rule_time(id);
+            const hits = get_ac3_rule_hit_count(id);
+            if (time > 0 || hits > 0) {
+                ruleTimes.push({ id, name, time, hits });
+                totalAC3Time += time;
+            }
+        }
+    }
+    
+    ruleTimes.sort((a, b) => b.time - a.time); // Sort by time descending
+    
+    console.log(`[Analyzer] Total analysis time: ${(end_time - start_time).toFixed(2)} ms`);
+    console.log(`\n=== Rule Execution Times ===`);
+    for (const t of ruleTimes) {
+        console.log(`${t.name.padEnd(35)} : ${t.time.toFixed(2).padStart(8)} ms | ${t.hits.toString().padStart(6)} hits`);
+    }
+    console.log('--------------------------------------------------');
+    console.log(`Total Rule Processing Time          : ${totalAC3Time.toFixed(2).padStart(8)} ms`);
+    console.log(`Total Lookahead Assumption Time     : ${get_perf_lookahead().toFixed(2).padStart(8)} ms`);
 
     // Dump to specific CSV file
     const count = get_deduction_log_count();
@@ -91,7 +125,7 @@ async function main() {
         else if (ruleId == 151) diff = 9;
         else if (ruleId >= 152 && ruleId <= 159) diff = 7;
         else if (ruleId >= 161 && ruleId <= 169) diff = 8;
-        else if (ruleId == 200 || depth > 0) diff = 10 + depth;
+        else if (ruleId == 200 || ruleId == 201 || depth > 0) diff = 10 + depth;
         else diff = ruleId;
 
         // step is just i+1 since we don't store it in the struct
@@ -103,9 +137,10 @@ async function main() {
     console.log(`[Analyzer] Dumped ${count} deduction steps to '${outCsv}'.`);
     const get_edge_states_ptr = Module.cwrap('get_edge_states_ptr', 'number', []);
     const edgesPtr = get_edge_states_ptr();
-    const edges = new Int8Array(Module.HEAP8.buffer, edgesPtr, 838);
+    const numEdges = (rows + 1) * cols + rows * (cols + 1);
+    const edges = new Int8Array(Module.HEAP8.buffer, edgesPtr, numEdges);
     let unknown = 0;
-    for(let i=0; i<838; i++) if(edges[i]==0) unknown++;
+    for(let i=0; i<numEdges; i++) if(edges[i]==0) unknown++;
     console.log('Unknown edges:', unknown);
     // We could check if there are unresolved edges by calling something, 
     // but the CSV step count gives us a hint anyway.

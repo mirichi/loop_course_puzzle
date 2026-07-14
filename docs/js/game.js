@@ -822,15 +822,44 @@ class LoopCourseGame {
       
       window.wasmModule._deduct(); // Full AC-3 constraint propagation
       
-      if (typeof window.wasmModule._get_first_deduced_edge === 'function') {
+      let foundChange = false;
+      for (let i = 0; i < numEdges; i++) {
+        if (this.edgeStates[i] === 0 && wasmEdgeData[i] !== 0) {
+          foundChange = true;
+          break;
+        }
+      }
+
+      if (!foundChange) {
+        if (typeof window.wasmModule._apply_lookahead_once === 'function') {
+          console.log("No simple deductions found. Trying Lookahead...");
+          const lookaheadFound = window.wasmModule._apply_lookahead_once();
+          console.log("Lookahead returned:", lookaheadFound);
+          if (lookaheadFound > 0) {
+            foundChange = true;
+          } else if (lookaheadFound === -1) {
+            console.error("Lookahead returned -1! Contradiction in current board state.");
+            this.statusTextEl.textContent = `盤面に矛盾が生じています！ルールを適用できません。`;
+            this.statusTextEl.classList.remove('loading');
+            return;
+          }
+        }
+      }
+      
+      if (typeof window.wasmModule._get_first_deduced_edge === 'function' && foundChange) {
         const firstEdgeIdx = window.wasmModule._get_first_deduced_edge();
         if (firstEdgeIdx !== -1) {
           const newState = wasmEdgeData[firstEdgeIdx];
           const singleChange = [{ edgeIdx: firstEdgeIdx, oldState: 0, newState: newState }];
           
-          let ruleName = "不明";
+          let ruleName = "Unknown Rule";
           if (typeof window.wasmModule._get_first_deduced_rule_name === 'function' && typeof window.wasmModule.UTF8ToString === 'function') {
             const ptr = window.wasmModule._get_first_deduced_rule_name();
+            if (ptr) {
+                ruleName = window.wasmModule.UTF8ToString(ptr);
+            }
+          } else if (typeof window.wasmModule._get_last_applied_rule_name === 'function') {
+            const ptr = window.wasmModule._get_last_applied_rule_name();
             if (ptr) {
                 ruleName = window.wasmModule.UTF8ToString(ptr);
             }
@@ -845,7 +874,7 @@ class LoopCourseGame {
           this.applyRulesBatch(singleChange, `💡 1手確定: [${ruleName}] (残り候補: ${totalFound - 1})`);
           return;
         }
-      } else {
+      } else if (foundChange) {
         // Fallback if WASM is not updated
         let ac3Changes = [];
         for (let i = 0; i < numEdges; i++) {
@@ -858,7 +887,7 @@ class LoopCourseGame {
   
         if (ac3Changes.length > 0) {
           const singleChange = [ac3Changes[0]];
-          this.applyRulesBatch(singleChange, `💡 AC-3 (制約伝播) で 1 箇所だけ確定しました！ (残り候補: ${ac3Changes.length - 1})`);
+          this.applyRulesBatch(singleChange, `💡 推論で 1 箇所確定しました！ (残り候補: ${ac3Changes.length - 1})`);
           return;
         }
       }

@@ -558,51 +558,40 @@ class LoopCourseGenerator {
     if (wasmModule && wasmGeneratePuzzleWasm) {
       console.log("Generating LoopCourse puzzle via high-speed WebAssembly (C engine)...");
       
-      // Hard, Master難易度 かつ マス数が225マス（15x15）以下の場合は5回生成して一番ヒントが少ないものを採用
-      const isHardOrMaster = difficulty.toLowerCase() === 'hard' || difficulty.toLowerCase() === 'master';
       const totalCells = this.rows * this.cols;
       const numEdges = (this.rows + 1) * this.cols + this.rows * (this.cols + 1);
-      const maxAttempts = (isHardOrMaster && totalCells <= 225) ? 5 : 1;
       
-      let bestClues = null;
-      let bestSolution = null;
-      let minClueCount = Infinity;
+      // 1. Initialize grid parameters and random seed
+      wasmInitGrid(this.rows, this.cols);
+      wasmSetRandomSeed(Math.floor(Math.random() * 2147483647));
       
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // 1. Initialize grid parameters and random seed
-        wasmInitGrid(this.rows, this.cols);
-        wasmSetRandomSeed(Math.floor(Math.random() * 2147483647));
-        
-        // 2. Trigger the C generator
-        wasmGeneratePuzzleWasm(difficulty);
-        
-        // 3. Extract generated clues and solution from WASM memory
-        const cluesPtr = wasmGetCluesPtr();
-        const edgeStatesPtr = wasmGetEdgeStatesPtr();
-        const wasmCluesData = wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + totalCells);
-        const wasmEdgeData = wasmModule.HEAP8.subarray(edgeStatesPtr, edgeStatesPtr + numEdges);
-        
-        // Parse clues to JS matrix and count them
-        let currentClueCount = 0;
-        const currentClues = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
-        for (let r = 0; r < this.rows; r++) {
-          for (let c = 0; c < this.cols; c++) {
-            const val = wasmCluesData[r * this.cols + c];
-            if (val !== -1) {
-              currentClues[r][c] = val;
-              currentClueCount++;
-            }
+      // 2. Trigger the C generator
+      wasmGeneratePuzzleWasm(difficulty);
+      
+      // 3. Extract generated clues and solution from WASM memory
+      const cluesPtr = wasmGetCluesPtr();
+      const edgeStatesPtr = wasmGetEdgeStatesPtr();
+      const wasmCluesData = wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + totalCells);
+      const wasmEdgeData = wasmModule.HEAP8.subarray(edgeStatesPtr, edgeStatesPtr + numEdges);
+      
+      // Parse clues to JS matrix and count them
+      let currentClueCount = 0;
+      const currentClues = Array.from({ length: this.rows }, () => new Array(this.cols).fill(null));
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          const val = wasmCluesData[r * this.cols + c];
+          if (val !== -1) {
+            currentClues[r][c] = val;
+            currentClueCount++;
           }
-        }
-        
-        if (currentClueCount < minClueCount) {
-          minClueCount = currentClueCount;
-          bestClues = currentClues;
-          bestSolution = new Int8Array(wasmEdgeData); // Copy the typed subarray
         }
       }
       
-      console.log(`[WASM Generator] Finished ${maxAttempts} attempt(s). Best puzzle has ${minClueCount}/${totalCells} clues.`);
+      let bestClues = currentClues;
+      let bestSolution = new Int8Array(wasmEdgeData); // Copy the typed subarray
+      let minClueCount = currentClueCount;
+      
+      console.log(`[WASM Generator] Finished generation. Puzzle has ${minClueCount}/${totalCells} clues.`);
       
       return {
         clues: bestClues,
