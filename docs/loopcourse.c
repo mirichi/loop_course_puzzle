@@ -31,6 +31,8 @@ int8_t edgeStates[MAX_EDGES]; // 0 = empty, 1 = line, -1 = cross
 int8_t clues[MAX_CELLS];       // 0-3 cell clues, or -1 for null/empty
 
 // Debug globals
+static int8_t debug_solved_states[MAX_EDGES];
+static bool debug_compare_solved = false;
 static const char* dbgSource = "init";
 static int lookaheadConfirmedCount = 0;
 static int lookaheadMaxLimit = 0;
@@ -362,10 +364,12 @@ EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
         case 140: return "Hard (Diag 2-3 Outer X/Line)";
         case 141: return "Global (Early Closed Loop)";
         case 142: return "Global (Jordan Curve)";
-        case 144: return "Global (Inside/Outside Coloring)";
         case 143: return "Global (Virtual Path Loop Prevention)";
+        case 144: return "Global (Inside/Outside Coloring)";
+        case 145: return "Global (Corridor Method)";
         case 151: return "Global (GF2 Parity)";
         case 152: return "Global (Bridge Connectivity)";
+        case 153: return "Global (Lightweight Lookahead)";
         case 161: return "Extreme (LUT Deduction)";
         case 200: return "Lookahead (Depth)";
         case 201: return "Lookahead (Forcing)";
@@ -408,7 +412,18 @@ EMSCRIPTEN_KEEPALIVE void reset_ac3_rule_times() {
 } while(0)
 #endif
 
+#ifdef DEBUG_MODE
+#define AC3_RETURN_FALSE do { \
+    RECORD_AC3_TIME(-1); \
+    if (isDoingLookahead) { \
+        printf("[DEBUG CONTRADICTION] AC3_RETURN_FALSE triggered in lookahead at line %d (Rule: %s, cell: %d, dot: %d)\n", \
+               __LINE__, dbgSource, dbgCell, dbgDot); \
+    } \
+    return false; \
+} while(0)
+#else
 #define AC3_RETURN_FALSE do { RECORD_AC3_TIME(-1); return false; } while(0)
+#endif
 #define AC3_RETURN_TRUE do { RECORD_AC3_TIME(-1); return true; } while(0)
 
 const char* current_rule_name = "不明なルール";
@@ -486,7 +501,26 @@ static inline int8_t getEdgeState(int edgeIdx) {
     return edgeStates[edgeIdx];
 }
 
+bool ac3_progress_flag = false;
+
 static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
+#ifdef DEBUG_MODE
+    if (debug_compare_solved && edgeIdx >= 0 && edgeIdx < numEdges) {
+        bool isPropagation = !isDoingLookahead || (cellStackTop > 0 || dotStackTop > 0);
+        if (isPropagation) {
+            int8_t correct = debug_solved_states[edgeIdx];
+            if (correct != 0 && state != correct) {
+                printf("[DEBUG DEVIATION] Edge %d (r=%d, c=%d, type=%s) tried to set to %d, but correct is %d. Rule: %s (id: %d), Line: %d\n",
+                       edgeIdx, 
+                       (edgeIdx < numH) ? (edgeIdx / cols) : ((edgeIdx - numH) / (cols + 1)),
+                       (edgeIdx < numH) ? (edgeIdx % cols) : ((edgeIdx - numH) % (cols + 1)),
+                       (edgeIdx < numH) ? "H" : "V",
+                       state, correct, 
+                       dbgSource, ac3_current_rule_id, line_no);
+            }
+        }
+    }
+#endif
     if (edgeIdx == numEdges) return state == -1; // Sentinel edge must be cross
     if (edgeIdx < 0 || edgeIdx > numEdges) {
         printf("[C ERROR] Invalid edge index %d (max %d) at line %d\n", edgeIdx, numEdges, line_no);
@@ -494,7 +528,13 @@ static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
     }
     if (edgeStates[edgeIdx] == state) return true; // Already set to this state
     if (edgeStates[edgeIdx] != 0) {
-                return false;    // Contradiction
+#ifdef DEBUG_MODE
+        if (isDoingLookahead) {
+            printf("[DEBUG CONTRADICTION] setEdgeState_real contradiction: edge %d already %d, tried to set to %d (Line: %d, Rule: %s, cell: %d, dot: %d)\n",
+                   edgeIdx, edgeStates[edgeIdx], state, line_no, dbgSource, dbgCell, dbgDot);
+        }
+#endif
+        return false;    // Contradiction
     }
     
     if (isDoingLookahead && lookaheadMaxLimit > 0 && lookaheadConfirmedCount >= lookaheadMaxLimit) {
@@ -502,6 +542,7 @@ static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
     }
     
     edgeStates[edgeIdx] = state;
+    ac3_progress_flag = true;
     RECORD_AC3_HIT();
     
     if (enable_deduction_logging && !isDoingLookahead && deduction_log_count < MAX_EDGES * 2) {
@@ -542,6 +583,12 @@ static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
             bool solved = isSolved();
             edgeStates[edgeIdx] = 0;
             if (!solved) {
+#ifdef DEBUG_MODE
+                if (isDoingLookahead) {
+                    printf("[DEBUG CONTRADICTION] setEdgeState_real Premature loop closed at edge %d (Line: %d, Rule: %s, cell: %d, dot: %d)\n",
+                           edgeIdx, line_no, dbgSource, dbgCell, dbgDot);
+                }
+#endif
                 return false; // Contradiction: Premature loop closed!
             }
         }
@@ -572,6 +619,255 @@ static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
 }
 
 #define setEdgeState(idx, st) setEdgeState_real(idx, st, __LINE__)
+
+// --- LIGHTWEIGHT SIMULATIVE LOOKAHEAD (PREMATURE LOOP & BASIC RULE FORCING) ---
+#define MAX_SIM_EDGES MAX_EDGES
+static int simEdges[MAX_SIM_EDGES];
+static int simStackTop = 0;
+static int simQueue[MAX_SIM_EDGES * 2];
+static int simQueueHead = 0;
+static int simQueueTail = 0;
+
+static inline bool setSimEdgeState(int edgeIdx, int8_t state) {
+    if (edgeIdx < 0 || edgeIdx >= numEdges) return true;
+    if (edgeStates[edgeIdx] == state) return true;
+    if (edgeStates[edgeIdx] != 0) {
+#ifdef DEBUG_MODE
+        printf("[DEBUG SIM CONTRADICTION] setSimEdgeState: edge %d already %d, tried to set to %d\n", edgeIdx, edgeStates[edgeIdx], state);
+#endif
+        return false; // Contradiction
+    }
+    
+    if (simStackTop < MAX_SIM_EDGES) {
+        simEdges[simStackTop] = edgeIdx;
+        simStackTop++;
+    } else {
+#ifdef DEBUG_MODE
+        printf("[DEBUG SIM CONTRADICTION] setSimEdgeState: stack overflow at edge %d (simStackTop=%d, MAX=%d)\n", edgeIdx, simStackTop, MAX_SIM_EDGES);
+#endif
+        return false; // Stack overflow -> contradiction for safety
+    }
+    
+    edgeStates[edgeIdx] = state;
+    
+    if (state == 1) {
+        int dotA, dotB;
+        if (edgeIdx < numH) {
+            int r = edgeIdx / cols;
+            int c = edgeIdx % cols;
+            dotA = r * (cols + 1) + c;
+            dotB = dotA + 1;
+        } else {
+            int vIdx = edgeIdx - numH;
+            int r = vIdx / (cols + 1);
+            int c = vIdx % (cols + 1);
+            dotA = r * (cols + 1) + c;
+            dotB = dotA + (cols + 1);
+        }
+        if (!dsuUnion(dotA, dotB)) {
+            // Loop closed! Check if it's a valid complete solved loop
+            if (!isSolved()) {
+#ifdef DEBUG_MODE
+                printf("[DEBUG SIM CONTRADICTION] setSimEdgeState: Premature loop closed at edge %d\n", edgeIdx);
+#endif
+                return false; // Contradiction: Premature loop closed!
+            }
+        }
+    }
+    
+    if (simQueueTail < MAX_SIM_EDGES * 2) {
+        simQueue[simQueueTail++] = edgeIdx;
+    }
+    return true;
+}
+
+static inline bool deductLightweight(int startEdge, int8_t startState) {
+    bool old_lookahead = isDoingLookahead;
+    isDoingLookahead = true;
+    simStackTop = 0;
+    simQueueHead = 0;
+    simQueueTail = 0;
+    int checkpoint = dsuHistoryCount;
+    
+    if (!setSimEdgeState(startEdge, startState)) {
+        dsuRollback(checkpoint);
+        for (int i = simStackTop - 1; i >= 0; i--) {
+            edgeStates[simEdges[i]] = 0;
+        }
+        isDoingLookahead = old_lookahead;
+        return false;
+    }
+    
+    bool contradiction = false;
+    while (simQueueHead < simQueueTail) {
+        int e = simQueue[simQueueHead++];
+        
+        // 1. Check adjacent cells
+        int cellCount = 0;
+        int cells[2];
+        if (e < numH) {
+            int r = e / cols;
+            int c = e % cols;
+            if (r > 0) cells[cellCount++] = (r - 1) * cols + c;
+            if (r < rows) cells[cellCount++] = r * cols + c;
+        } else {
+            int vIdx = e - numH;
+            int r = vIdx / (cols + 1);
+            int c = vIdx % (cols + 1);
+            if (c > 0) cells[cellCount++] = r * cols + (c - 1);
+            if (c < cols) cells[cellCount++] = r * cols + c;
+        }
+        
+        for (int i = 0; i < cellCount; i++) {
+            int cc = cells[i];
+            int clue = clues[cc];
+            if (clue == -1) continue;
+            
+            int cr = cc / cols;
+            int cc_col = cc % cols;
+            int cEdges[4];
+            cEdges[0] = cr * cols + cc_col; // Top
+            cEdges[1] = numH + cr * (cols + 1) + (cc_col + 1); // Right
+            cEdges[2] = (cr + 1) * cols + cc_col; // Bottom
+            cEdges[3] = numH + cr * (cols + 1) + cc_col; // Left
+            
+            int lines = 0;
+            int crosses = 0;
+            int undecidedCount = 0;
+            int undecided[4];
+            
+            for (int j = 0; j < 4; j++) {
+                int ce = cEdges[j];
+                if (edgeStates[ce] == 1) lines++;
+                else if (edgeStates[ce] == -1) crosses++;
+                else undecided[undecidedCount++] = ce;
+            }
+            
+            if (lines > clue || crosses > (4 - clue)) {
+#ifdef DEBUG_MODE
+                printf("[DEBUG SIM CONTRADICTION] Cell %d (clue %d) contradiction: lines=%d, crosses=%d\n", cc, clue, lines, crosses);
+#endif
+                contradiction = true;
+                break;
+            }
+            
+            if (undecidedCount > 0) {
+                if (lines == clue) {
+                    for (int j = 0; j < undecidedCount; j++) {
+                        if (!setSimEdgeState(undecided[j], -1)) { contradiction = true; break; }
+                    }
+                } else if (crosses == (4 - clue)) {
+                    for (int j = 0; j < undecidedCount; j++) {
+                        if (!setSimEdgeState(undecided[j], 1)) { contradiction = true; break; }
+                    }
+                }
+            }
+            if (contradiction) break;
+        }
+        if (contradiction) break;
+        
+        // 2. Check connected dots
+        int dotA, dotB;
+        if (e < numH) {
+            int r = e / cols;
+            int c = e % cols;
+            dotA = r * (cols + 1) + c;
+            dotB = dotA + 1;
+        } else {
+            int vIdx = e - numH;
+            int r = vIdx / (cols + 1);
+            int c = vIdx % (cols + 1);
+            dotA = r * (cols + 1) + c;
+            dotB = dotA + (cols + 1);
+        }
+        
+        int dots[2] = {dotA, dotB};
+        for (int i = 0; i < 2; i++) {
+            int d = dots[i];
+            int dr = d / (cols + 1);
+            int dc = d % (cols + 1);
+            
+            int dEdges[4];
+            int dEdgesCount = getDotEdges(dr, dc, dEdges);
+            
+            int lines = 0;
+            int crosses = 0;
+            int undecidedCount = 0;
+            int undecided[4];
+            
+            for (int j = 0; j < dEdgesCount; j++) {
+                int de = dEdges[j];
+                if (de == numEdges) continue;
+                if (edgeStates[de] == 1) lines++;
+                else if (edgeStates[de] == -1) crosses++;
+                else undecided[undecidedCount++] = de;
+            }
+            
+            if (lines > 2) {
+#ifdef DEBUG_MODE
+                printf("[DEBUG SIM CONTRADICTION] Dot %d (dr=%d, dc=%d) contradiction: lines=%d > 2\n", d, dr, dc, lines);
+#endif
+                contradiction = true;
+                break;
+            }
+            if (lines == 1 && undecidedCount == 0) {
+#ifdef DEBUG_MODE
+                printf("[DEBUG SIM CONTRADICTION] Dot %d (dr=%d, dc=%d) contradiction: Dead end (lines=1, undecided=0)\n", d, dr, dc);
+#endif
+                contradiction = true;
+                break;
+            }
+            
+            if (lines == 2) {
+                for (int j = 0; j < undecidedCount; j++) {
+                    if (!setSimEdgeState(undecided[j], -1)) { contradiction = true; break; }
+                }
+            } else if (lines == 1 && undecidedCount == 1) {
+                if (!setSimEdgeState(undecided[0], 1)) { contradiction = true; break; }
+            } else if (lines == 0 && undecidedCount == 1) {
+                if (!setSimEdgeState(undecided[0], -1)) { contradiction = true; break; }
+            }
+            if (contradiction) break;
+        }
+        if (contradiction) break;
+    }
+    
+    dsuRollback(checkpoint);
+    for (int i = simStackTop - 1; i >= 0; i--) {
+        edgeStates[simEdges[i]] = 0;
+    }
+    isDoingLookahead = old_lookahead;
+    return !contradiction;
+}
+
+int applyLightweightLookahead() {
+    bool changed = false;
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] == 0) {
+            if (!deductLightweight(i, 1)) {
+                RECORD_AC3_TIME(153); // Global (Lightweight Lookahead)
+                if (!setEdgeState(i, -1)) return -1;
+                RECORD_AC3_TIME(-1);
+                changed = true;
+                if (enable_deduction_logging) {
+                    return 1; // Exit early after 1 confirmation during analysis mode
+                }
+            }
+            if (edgeStates[i] != 0) continue;
+            
+            if (!deductLightweight(i, -1)) {
+                RECORD_AC3_TIME(153); // Global (Lightweight Lookahead)
+                if (!setEdgeState(i, 1)) return -1;
+                RECORD_AC3_TIME(-1);
+                changed = true;
+                if (enable_deduction_logging) {
+                    return 1; // Exit early after 1 confirmation during analysis mode
+                }
+            }
+        }
+    }
+    return changed ? 1 : 0;
+}
 
 // TRACE PREMATURE LOOPS (WASM optimized BFS cycle tracer)
 bool preventsPrematureLoops() {
@@ -1505,22 +1801,22 @@ bool applyStaticRules_internal() {
     staticRuleEdgesTotal += afterStatic;
 
     extern bool restrictLogicToLocal;
-    if (!restrictLogicToLocal) {
-        double t_lut_start = emscripten_get_now();
-        if (!enable_deduction_logging) {
-            RECORD_AC3_TIME(161);
-            if (!applyLUT()) return false;
+    // if (!restrictLogicToLocal) {
+    //     double t_lut_start = emscripten_get_now();
+    //     if (!enable_deduction_logging) {
+    //         RECORD_AC3_TIME(161);
+    //         if (!applyLUT()) return false;
             
-            RECORD_AC3_TIME(161);
-            if (!applyBoundaryLUTs()) return false;
-        }
-        perf_lut += emscripten_get_now() - t_lut_start;
+    //         RECORD_AC3_TIME(161);
+    //         if (!applyBoundaryLUTs()) return false;
+    //     }
+    //     perf_lut += emscripten_get_now() - t_lut_start;
         
-        int afterLUT = 0;
-        for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
-        extern int lutEdgesTotal;
-        lutEdgesTotal += (afterLUT - afterStatic);
-    }
+    //     int afterLUT = 0;
+    //     for(int i=0; i<numEdges; i++) if(edgeStates[i] != 0) afterLUT++;
+    //     extern int lutEdgesTotal;
+    //     lutEdgesTotal += (afterLUT - afterStatic);
+    // }
 
     return true;
 }
@@ -2001,7 +2297,7 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
         
         if (clue == 2) {
             // 2のセルの場合、対角の角もXOR状態となり、次のセルへ伝搬する
-            int oppEdge1 = -1, oppEdge2 = -1;
+            int oppEdge1 = numEdges, oppEdge2 = numEdges;
             if (dr == 1 && dc == 1) { 
                 oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
                 oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
@@ -2016,7 +2312,7 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
                 oppEdge2 = getVEdgeIndex(curr_r, curr_c);
             }
 
-            if (oppEdge1 != -1 && oppEdge2 != -1) {
+            if (oppEdge1 != numEdges && oppEdge2 != numEdges) {
                 if (edgeStates[oppEdge1] == 1) { if (!setEdgeState(oppEdge2, -1)) return false; }
                 if (edgeStates[oppEdge1] == -1) { if (!setEdgeState(oppEdge2, 1)) return false; }
                 if (edgeStates[oppEdge2] == 1) { if (!setEdgeState(oppEdge1, -1)) return false; }
@@ -2028,7 +2324,7 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
         } else {
             // 2以外のセルに到達した場合、伝搬はここで終了。
             // さらに奥側の角に対する特殊な推論（1や3の場合）を行う。
-            int oppEdge1 = -1, oppEdge2 = -1;
+            int oppEdge1 = numEdges, oppEdge2 = numEdges;
             if (dr == 1 && dc == 1) { 
                 oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
                 oppEdge2 = getVEdgeIndex(curr_r, curr_c + 1);
@@ -2046,11 +2342,11 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
             if (clue == 0) {
                 return false; // 手前角にXOR(線1本入る)が確定しているのに0セルは矛盾
             } else if (clue == 1) {
-                if (oppEdge1 != -1 && !setEdgeState(oppEdge1, -1)) return false;
-                if (oppEdge2 != -1 && !setEdgeState(oppEdge2, -1)) return false;
+                if (oppEdge1 != numEdges && !setEdgeState(oppEdge1, -1)) return false;
+                if (oppEdge2 != numEdges && !setEdgeState(oppEdge2, -1)) return false;
             } else if (clue == 3) {
-                if (oppEdge1 != -1 && !setEdgeState(oppEdge1, 1)) return false;
-                if (oppEdge2 != -1 && !setEdgeState(oppEdge2, 1)) return false;
+                if (oppEdge1 != numEdges && !setEdgeState(oppEdge1, 1)) return false;
+                if (oppEdge2 != numEdges && !setEdgeState(oppEdge2, 1)) return false;
             }
             break;
         }
@@ -2793,44 +3089,119 @@ RECORD_AC3_TIME(138);
                     if (edgeStates[edgeIdx] == 1) lines++;
                     else if (edgeStates[edgeIdx] == -1) crosses++;
                     else {
-                        // --- PREMATURE LOOP PREVENTION ---
-                        if (enableAdvancedAC3) {
+                        // --- PREMATURE LOOP PREVENTION (OPTIMIZED CORRIDOR METHOD) ---
+                        if (ac3_current_difficulty_limit >= DIFF_EASY) {
                             int dotA, dotB;
+                            int rA, cA, rB, cB;
                             if (edgeIdx < numH) {
-                                int er = edgeIdx / cols;
-                                int ec = edgeIdx % cols;
-                                dotA = er * (cols + 1) + ec;
+                                rA = edgeIdx / cols;
+                                cA = edgeIdx % cols;
+                                dotA = rA * (cols + 1) + cA;
                                 dotB = dotA + 1;
+                                rB = rA;
+                                cB = cA + 1;
                             } else {
                                 int vIdx = edgeIdx - numH;
-                                int er = vIdx / (cols + 1);
-                                int ec = vIdx % (cols + 1);
-                                dotA = er * (cols + 1) + ec;
+                                rA = vIdx / (cols + 1);
+                                cA = vIdx % (cols + 1);
+                                dotA = rA * (cols + 1) + cA;
                                 dotB = dotA + (cols + 1);
+                                rB = rA + 1;
+                                cB = cA;
                             }
-                            if (dsuFind(dotA) == dsuFind(dotB)) {
-                                // Connecting these dots forms a loop. Check if it's the valid final loop.
-                                edgeStates[edgeIdx] = 1;
-                                bool solved = isSolved();
-                                edgeStates[edgeIdx] = 0;
-                                if (!solved) {
-                                    // It is a premature small loop. It must be a cross!
-                                    int prev_rule_id = ac3_current_rule_id;
-RECORD_AC3_TIME(141);
-                                    ac3_current_rule_id = 141; // Using the same ID as global premature loop, or create a new one. Let's use the global one for aggregation.
+                            int startDsu = dsuFind(dotA);
+                            if (startDsu != dsuFind(dotB)) {
+                                int corridor_prev_rule_id = ac3_current_rule_id;
+                                RECORD_AC3_TIME(145);
+                                
+                                int traceEdges[16]; 
+                                int traceCount = 0;
+                                
+                                int currDot = (dsuFind(dotA) == startDsu) ? dotB : dotA;
+                                int curr_r = (dsuFind(dotA) == startDsu) ? rB : rA;
+                                int curr_c = (dsuFind(dotA) == startDsu) ? cB : cA;
+                                int currEdge = edgeIdx;
+                                bool formsLoop = false;
+                                
+                                while (traceCount < 15) {
+                                    if (dsuFind(currDot) == startDsu) {
+                                        formsLoop = true;
+                                        break;
+                                    }
                                     
-                                    bool res = setEdgeState(edgeIdx, -1);
+                                    int nextEdges[4];
+                                    nextEdges[0] = (curr_r > 0) ? (numH + (curr_r - 1) * (cols + 1) + curr_c) : numEdges; // Up
+                                    nextEdges[1] = (curr_r < rows) ? (numH + curr_r * (cols + 1) + curr_c) : numEdges;   // Down
+                                    nextEdges[2] = (curr_c > 0) ? (curr_r * cols + curr_c - 1) : numEdges;               // Left
+                                    nextEdges[3] = (curr_c < cols) ? (curr_r * cols + curr_c) : numEdges;                // Right
                                     
-                                    ac3_current_rule_id = prev_rule_id;
-                                    RECORD_AC3_TIME(prev_rule_id);
+                                    int nLines = 0;
+                                    int nUndecided[4];
+                                    int nUndecidedCount = 0;
                                     
-                                    if (!res) AC3_RETURN_FALSE;
-                                    crosses++;
-                                    continue;
+                                    for (int k = 0; k < 4; k++) {
+                                        int nEdge = nextEdges[k];
+                                        if (nEdge == numEdges) continue;
+                                        if (edgeStates[nEdge] == 1) nLines++;
+                                        else if (edgeStates[nEdge] == 0) nUndecided[nUndecidedCount++] = nEdge;
+                                    }
+                                    
+                                    if (nLines > 0) break; 
+                                    if (nUndecidedCount != 2) break; 
+                                    
+                                    currEdge = (nUndecided[0] == currEdge) ? nUndecided[1] : nUndecided[0];
+                                    traceEdges[traceCount++] = currEdge;
+                                    
+                                    int nDotA, nDotB;
+                                    int nrA, ncA, nrB, ncB;
+                                    if (currEdge < numH) {
+                                        nrA = currEdge / cols;
+                                        ncA = currEdge % cols;
+                                        nDotA = nrA * (cols + 1) + ncA;
+                                        nDotB = nDotA + 1;
+                                        nrB = nrA;
+                                        ncB = ncA + 1;
+                                    } else {
+                                        int vIdx = currEdge - numH;
+                                        nrA = vIdx / (cols + 1);
+                                        ncA = vIdx % (cols + 1);
+                                        nDotA = nrA * (cols + 1) + ncA;
+                                        nDotB = nDotA + (cols + 1);
+                                        nrB = nrA + 1;
+                                        ncB = ncA;
+                                    }
+                                    if (nDotA == currDot) {
+                                        currDot = nDotB;
+                                        curr_r = nrB;
+                                        curr_c = ncB;
+                                    } else {
+                                        currDot = nDotA;
+                                        curr_r = nrA;
+                                        curr_c = ncA;
+                                    }
+                                } 
+                                
+                                if (formsLoop) {
+                                    for (int k = 0; k < traceCount; k++) edgeStates[traceEdges[k]] = 1;
+                                    edgeStates[edgeIdx] = 1;
+                                    bool solved = isSolved();
+                                    edgeStates[edgeIdx] = 0;
+                                    for (int k = 0; k < traceCount; k++) edgeStates[traceEdges[k]] = 0;
+                                    
+                                    if (!solved) {
+                                        bool res = setEdgeState(edgeIdx, -1);
+                                        if (!res) {
+                                            RECORD_AC3_TIME(corridor_prev_rule_id);
+                                            AC3_RETURN_FALSE;
+                                        }
+                                        crosses++;
+                                        RECORD_AC3_TIME(corridor_prev_rule_id);
+                                        continue;
+                                    }
                                 }
+                                RECORD_AC3_TIME(corridor_prev_rule_id);
                             }
                         }
-                        // ---------------------------------
                         
                         undecided[undecidedCount++] = edgeIdx;
                     }
@@ -3202,9 +3573,28 @@ RECORD_AC3_TIME(126);
 
 static inline bool deductIncremental() {
     double t0 = emscripten_get_now();
-    bool res = deductIncremental_internal();
+    while (true) {
+        if (!deductIncremental_internal()) {
+            perf_ac3 += emscripten_get_now() - t0;
+            return false;
+        }
+        
+        // Lightweight simulative Look-ahead
+        if (!isDoingLookahead && ac3_current_difficulty_limit >= DIFF_GLOBAL_4) {
+            int ret = applyLightweightLookahead();
+            if (ret == -1) {
+                perf_ac3 += emscripten_get_now() - t0;
+                return false; // Contradiction
+            }
+            if (ret == 1) {
+                // Progress made, run AC-3 propagation again
+                continue;
+            }
+        }
+        break;
+    }
     perf_ac3 += emscripten_get_now() - t0;
-    return res;
+    return true;
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -3663,39 +4053,7 @@ double calculateZigzagBendPenalty() {
 }
 
 static inline bool isEdgeConstrained(int e) {
-    int r, c, dotA, dotB;
-    if (e < numH) {
-        r = e / cols;
-        c = e % cols;
-        // Motivated by clue 2 or 3
-        if (r > 0 && clues[(r - 1) * cols + c] >= 2) return true;
-        if (r < rows && clues[r * cols + c] >= 2) return true;
-        dotA = r * (cols + 1) + c;
-        dotB = dotA + 1;
-    } else {
-        int vIdx = e - numH;
-        r = vIdx / (cols + 1);
-        c = vIdx % (cols + 1);
-        // Motivated by clue 2 or 3
-        if (c > 0 && clues[r * cols + (c - 1)] >= 2) return true;
-        if (c < cols && clues[r * cols + c] >= 2) return true;
-        dotA = r * (cols + 1) + c;
-        dotB = dotA + (cols + 1);
-    }
-    
-    // Motivated by extending an existing line (1)
-    int edges[4];
-    int count = getDotEdges(dotA / (cols + 1), dotA % (cols + 1), edges);
-    for (int i = 0; i < count; i++) {
-        if (edges[i] != e && edgeStates[edges[i]] == 1) return true;
-    }
-    
-    count = getDotEdges(dotB / (cols + 1), dotB % (cols + 1), edges);
-    for (int i = 0; i < count; i++) {
-        if (edges[i] != e && edgeStates[edges[i]] == 1) return true;
-    }
-    
-    return false;
+    return true;
 }
 
 int lookaheadEdgeTests = 0;
@@ -3745,19 +4103,40 @@ int check_human_solvability() {
                 if (allDecided) return isSolved() ? 1 : 0;
             }
         } else {
-            ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
-            int edges_before = 0;
-            for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
-            if (!deductIncremental()) return 0;
-            int edges_after = 0;
-            for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_after++;
-            if (edges_after > edges_before) progressInPhase = true;
+            // Lightweight difficulty escalation: try easy rules first, escalate only when stuck
+            // Also track consecutive hard breakthroughs to ensure good "tokiaji" (solving flow)
+            #define HARD_TECHNIQUE_THRESHOLD DIFF_GLOBAL_3  // IO Coloring, LUT, GF2, Lookahead
+            #define MAX_CONSECUTIVE_HARD 1                   // Max consecutive hard breakthroughs allowed
+            int consecutive_hard = 0;
             
-            bool allDecided = true;
-            for (int i = 0; i < numEdges; i++) {
-                if (edgeStates[i] == 0) { allDecided = false; break; }
+            ac3_current_difficulty_limit = 1;
+            while (ac3_current_difficulty_limit <= DIFF_LOOKAHEAD) {
+                ac3_progress_flag = false;
+                if (!deductIncremental()) return 0;
+                
+                if (ac3_progress_flag) {
+                    if (ac3_current_difficulty_limit >= HARD_TECHNIQUE_THRESHOLD) {
+                        // Hard technique was needed for this breakthrough
+                        consecutive_hard++;
+                        if (consecutive_hard > MAX_CONSECUTIVE_HARD) {
+                            return -3; // Solvable but poor tokiaji: too many consecutive hard steps
+                        }
+                    } else {
+                        // Easy/medium technique made progress - good cascade! Reset streak.
+                        consecutive_hard = 0;
+                    }
+                    ac3_current_difficulty_limit = 1; // Progress! Reset to easy rules
+                    progressInPhase = true;
+                } else {
+                    ac3_current_difficulty_limit++; // No progress, escalate
+                }
+                
+                bool allDecided = true;
+                for (int i = 0; i < numEdges; i++) {
+                    if (edgeStates[i] == 0) { allDecided = false; break; }
+                }
+                if (allDecided) return isSolved() ? 1 : 0;
             }
-            if (allDecided) return isSolved() ? 1 : 0;
         }
         
         // In deduction logging mode, run 1-step lookahead as Level 10 logic.
@@ -4576,6 +4955,8 @@ static bool checkSolvability(const char* difficulty) {
         debugContradictionCount++;
     } else if (result == -2) {
         debugContradictionCount++; // treat stalled as not solvable
+    } else if (result == -3) {
+        // Solvable but poor tokiaji (consecutive hard techniques) - treat as not solvable
     }
     
     return (result == 1);
@@ -4949,8 +5330,39 @@ int analyze_puzzle(const char* difficulty) {
     deduction_log_count = 0;
     enable_deduction_logging = true;
     
+    lookaheadMaxLimit = 100;
+    
+#ifdef DEBUG_MODE
+    // Solve first to get correct target solutions
+    extern int foundSolutionsCount;
+    extern int explorationSteps;
+    extern bool isTimeout;
+    extern int8_t foundSolutions[MAX_SOLUTIONS][MAX_EDGES];
+    extern void backtrack(int edgeIdx, bool findSingle, int maxSteps);
+    foundSolutionsCount = 0;
+    explorationSteps = 0;
+    isTimeout = false;
+    memset(foundSolutions, 0, sizeof(foundSolutions));
+    dsuInitFromCurrent();
+    backtrack(0, true, 1000000);
+    
+    if (foundSolutionsCount > 0) {
+        memcpy(debug_solved_states, foundSolutions[0], numEdges);
+        debug_compare_solved = true;
+    } else {
+        debug_compare_solved = false;
+    }
+#else
+    debug_compare_solved = false;
+#endif
+    
+    memset(edgeStates, 0, numEdges); // Reset after backtrack
+    dsuInitFromCurrent();
+    clearStacks();
+    
     int result = check_human_solvability();
     
+    debug_compare_solved = false;
     enable_deduction_logging = false;
     ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
     return result;
