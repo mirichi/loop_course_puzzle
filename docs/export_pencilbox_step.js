@@ -41,6 +41,7 @@ async function main() {
     const analyze_puzzle = Module.cwrap('analyze_puzzle', null, []);
     const solve_puzzle_wasm = Module.cwrap('solve_puzzle_wasm', 'number', ['boolean', 'number']);
     const get_solution_ptr = Module.cwrap('get_solution_ptr', 'number', ['number']);
+    const get_edge_states_ptr = Module.cwrap('get_edge_states_ptr', 'number', []);
 
     init_grid(rows, cols);
     set_advanced_ac3(1);
@@ -50,15 +51,21 @@ async function main() {
         Module.HEAP8[cluesPtr + i] = parsedClues[i];
     }
     
-    // First, analyze to get the deduction logs
-    analyze_puzzle();
-    
-    // Then, solve to get the final edge states
-    solve_puzzle_wasm(true, 1000000);
-    
+    // Solve first to get correct solution from clean state
+    const edgesPtrForClean = get_edge_states_ptr();
     const numEdges = (rows + 1) * cols + rows * (cols + 1);
+    const wasmEdgeData = new Int8Array(Module.HEAP8.buffer, edgesPtrForClean, numEdges);
+    wasmEdgeData.fill(0);
+    
+    const solveCount = solve_puzzle_wasm(true, 1000000);
+    console.log(`solve_puzzle_wasm returned solutions: ${solveCount}`);
+    
     const edgesPtr = get_solution_ptr(0);
-    const solvedEdgeStates = new Int8Array(Module.HEAP8.subarray(edgesPtr, edgesPtr + numEdges));
+    const solvedEdgeStates = new Int8Array(Module.HEAP8.slice(edgesPtr, edgesPtr + numEdges));
+    
+    // Now run analysis
+    wasmEdgeData.fill(0);
+    analyze_puzzle();
 
     // Read CSV to find which edges were set
     const newEdgeStates = new Int8Array(numEdges);

@@ -18,6 +18,18 @@
 #define MAX_EDGES 5500
 #define MAX_DOTS 2700
 
+// Difficulty Levels
+#define DIFF_BASIC     1
+#define DIFF_EASY      2
+#define DIFF_MEDIUM    3
+#define DIFF_HARD      4
+#define DIFF_GLOBAL_1  5
+#define DIFF_GLOBAL_2  6
+#define DIFF_GLOBAL_3  7
+#define DIFF_EXTREME   8
+#define DIFF_GLOBAL_4  9
+#define DIFF_LOOKAHEAD 10
+
 // Grid parameters
 int rows = 0;
 int cols = 0;
@@ -74,6 +86,7 @@ void set_prioritize_gf2(bool enabled) {
 EMSCRIPTEN_KEEPALIVE
 void set_solver_difficulty(const char* difficulty) {
     extern int lookaheadMaxLimit;
+    extern int solver_max_difficulty;
     if (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) {
         restrictLogicToLocal = true;
         enableGF2 = false;
@@ -82,14 +95,17 @@ void set_solver_difficulty(const char* difficulty) {
         restrictLogicToLocal = false;
         enableGF2 = false;
         lookaheadMaxLimit = 0;
+        solver_max_difficulty = DIFF_GLOBAL_3; // Cap at difficulty 7
     } else if (strcmp(difficulty, "Hard") == 0 || strcmp(difficulty, "hard") == 0) {
         restrictLogicToLocal = false;
         enableGF2 = true;
-        lookaheadMaxLimit = 0; // Disabled for generation by user request
+        lookaheadMaxLimit = 0;
+        solver_max_difficulty = DIFF_EXTREME; // Cap at difficulty 8
     } else if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
         restrictLogicToLocal = false;
         enableGF2 = true;
-        lookaheadMaxLimit = 0; // Disabled for generation by user request
+        lookaheadMaxLimit = 0;
+        solver_max_difficulty = DIFF_GLOBAL_4; // Cap at difficulty 9
     }
 }
 
@@ -318,17 +334,6 @@ int8_t* get_clues_ptr() {
 int deduction_history[MAX_EDGES * 2];
 const char* deduction_rule_names[MAX_EDGES * 2];
 int deduction_history_count = 0;
-// Difficulty Levels
-#define DIFF_BASIC     1
-#define DIFF_EASY      2
-#define DIFF_MEDIUM    3
-#define DIFF_HARD      4
-#define DIFF_GLOBAL_1  5
-#define DIFF_GLOBAL_2  6
-#define DIFF_GLOBAL_3  7
-#define DIFF_EXTREME   8
-#define DIFF_GLOBAL_4  9
-#define DIFF_LOOKAHEAD 10
 
 // AC3 Sub-profiling
 double ac3_rule_times[256];
@@ -336,6 +341,7 @@ int ac3_rule_hit_counts[256];
 int ac3_current_rule_id = -1;
 double ac3_t_start = 0;
 int ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
+int solver_max_difficulty = DIFF_LOOKAHEAD;
 
 EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
     switch (idx) {
@@ -369,7 +375,9 @@ EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
         case 145: return "Global (Corridor Method)";
         case 151: return "Global (GF2 Parity)";
         case 152: return "Global (Bridge Connectivity)";
-        case 153: return "Global (Lightweight Lookahead)";
+        case 153: return "Global (Loop Sim-Lookahead)";
+        case 154: return "Extreme (Contradiction Sim-Lookahead)";
+        case 155: return "Global (Full Sim-Lookahead)";
         case 161: return "Extreme (LUT Deduction)";
         case 200: return "Lookahead (Depth)";
         case 201: return "Lookahead (Forcing)";
@@ -681,7 +689,7 @@ static inline bool setSimEdgeState(int edgeIdx, int8_t state) {
     return true;
 }
 
-static inline bool deductLightweight(int startEdge, int8_t startState) {
+static inline bool deductLightweight(int startEdge, int8_t startState, bool loopDetectionOnly) {
     bool old_lookahead = isDoingLookahead;
     isDoingLookahead = true;
     simStackTop = 0;
@@ -744,6 +752,7 @@ static inline bool deductLightweight(int startEdge, int8_t startState) {
             }
             
             if (lines > clue || crosses > (4 - clue)) {
+                if (loopDetectionOnly) continue; // Skip contradiction in loop-only mode
 #ifdef DEBUG_MODE
                 printf("[DEBUG SIM CONTRADICTION] Cell %d (clue %d) contradiction: lines=%d, crosses=%d\n", cc, clue, lines, crosses);
 #endif
@@ -754,11 +763,17 @@ static inline bool deductLightweight(int startEdge, int8_t startState) {
             if (undecidedCount > 0) {
                 if (lines == clue) {
                     for (int j = 0; j < undecidedCount; j++) {
-                        if (!setSimEdgeState(undecided[j], -1)) { contradiction = true; break; }
+                        if (!setSimEdgeState(undecided[j], -1)) {
+                            if (loopDetectionOnly) { /* loop detected via propagation */ }
+                            contradiction = true; break;
+                        }
                     }
                 } else if (crosses == (4 - clue)) {
                     for (int j = 0; j < undecidedCount; j++) {
-                        if (!setSimEdgeState(undecided[j], 1)) { contradiction = true; break; }
+                        if (!setSimEdgeState(undecided[j], 1)) {
+                            if (loopDetectionOnly) { /* loop detected via propagation */ }
+                            contradiction = true; break;
+                        }
                     }
                 }
             }
@@ -804,6 +819,7 @@ static inline bool deductLightweight(int startEdge, int8_t startState) {
             }
             
             if (lines > 2) {
+                if (loopDetectionOnly) continue; // Skip contradiction in loop-only mode
 #ifdef DEBUG_MODE
                 printf("[DEBUG SIM CONTRADICTION] Dot %d (dr=%d, dc=%d) contradiction: lines=%d > 2\n", d, dr, dc, lines);
 #endif
@@ -811,6 +827,7 @@ static inline bool deductLightweight(int startEdge, int8_t startState) {
                 break;
             }
             if (lines == 1 && undecidedCount == 0) {
+                if (loopDetectionOnly) continue; // Skip dead-end contradiction in loop-only mode
 #ifdef DEBUG_MODE
                 printf("[DEBUG SIM CONTRADICTION] Dot %d (dr=%d, dc=%d) contradiction: Dead end (lines=1, undecided=0)\n", d, dr, dc);
 #endif
@@ -840,30 +857,107 @@ static inline bool deductLightweight(int startEdge, int8_t startState) {
     return !contradiction;
 }
 
-int applyLightweightLookahead() {
+// Helper: check if an undecided edge is adjacent to an existing line (extends from endpoint)
+static inline bool isAdjacentToLine(int edgeIdx) {
+    int dotA, dotB;
+    if (edgeIdx < numH) {
+        int r = edgeIdx / cols;
+        int c = edgeIdx % cols;
+        dotA = r * (cols + 1) + c;
+        dotB = dotA + 1;
+    } else {
+        int vIdx = edgeIdx - numH;
+        int r = vIdx / (cols + 1);
+        int c = vIdx % (cols + 1);
+        dotA = r * (cols + 1) + c;
+        dotB = dotA + (cols + 1);
+    }
+    
+    // Check if either endpoint dot has at least one line connected
+    int dEdges[4];
+    for (int d = 0; d < 2; d++) {
+        int dot = (d == 0) ? dotA : dotB;
+        int dr = dot / (cols + 1);
+        int dc = dot % (cols + 1);
+        getDotEdges(dr, dc, dEdges);
+        for (int j = 0; j < 4; j++) {
+            if (dEdges[j] != numEdges && dEdges[j] != edgeIdx && edgeStates[dEdges[j]] == 1) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Mode 1: Loop detection only, from line endpoints (Difficulty 6 = DIFF_GLOBAL_2)
+int applyLightweightLookahead_LoopOnly() {
     bool changed = false;
     for (int i = 0; i < numEdges; i++) {
-        if (edgeStates[i] == 0) {
-            if (!deductLightweight(i, 1)) {
-                RECORD_AC3_TIME(153); // Global (Lightweight Lookahead)
-                if (!setEdgeState(i, -1)) return -1;
-                RECORD_AC3_TIME(-1);
-                changed = true;
-                if (enable_deduction_logging) {
-                    return 1; // Exit early after 1 confirmation during analysis mode
-                }
-            }
-            if (edgeStates[i] != 0) continue;
-            
-            if (!deductLightweight(i, -1)) {
-                RECORD_AC3_TIME(153); // Global (Lightweight Lookahead)
-                if (!setEdgeState(i, 1)) return -1;
-                RECORD_AC3_TIME(-1);
-                changed = true;
-                if (enable_deduction_logging) {
-                    return 1; // Exit early after 1 confirmation during analysis mode
-                }
-            }
+        if (edgeStates[i] != 0) continue;
+        if (!isAdjacentToLine(i)) continue; // Only edges adjacent to existing lines
+        
+        if (!deductLightweight(i, 1, true)) {
+            RECORD_AC3_TIME(153); // Loop Sim-Lookahead
+            if (!setEdgeState(i, -1)) return -1;
+            RECORD_AC3_TIME(-1);
+            return 1;
+        }
+        if (edgeStates[i] != 0) continue;
+        
+        if (!deductLightweight(i, -1, true)) {
+            RECORD_AC3_TIME(153);
+            if (!setEdgeState(i, 1)) return -1;
+            RECORD_AC3_TIME(-1);
+            return 1;
+        }
+    }
+    return changed ? 1 : 0;
+}
+
+// Mode 2: Loop + contradiction detection, from line endpoints (Difficulty 8 = DIFF_EXTREME)
+int applyLightweightLookahead_Endpoint() {
+    bool changed = false;
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] != 0) continue;
+        if (!isAdjacentToLine(i)) continue; // Only edges adjacent to existing lines
+        
+        if (!deductLightweight(i, 1, false)) {
+            RECORD_AC3_TIME(154); // Contradiction Sim-Lookahead
+            if (!setEdgeState(i, -1)) return -1;
+            RECORD_AC3_TIME(-1);
+            return 1;
+        }
+        if (edgeStates[i] != 0) continue;
+        
+        if (!deductLightweight(i, -1, false)) {
+            RECORD_AC3_TIME(154);
+            if (!setEdgeState(i, 1)) return -1;
+            RECORD_AC3_TIME(-1);
+            return 1;
+        }
+    }
+    return changed ? 1 : 0;
+}
+
+// Mode 3: Full sim-lookahead on all undecided edges (Difficulty 9 = DIFF_GLOBAL_4)
+int applyLightweightLookahead_Full() {
+    bool changed = false;
+    for (int i = 0; i < numEdges; i++) {
+        if (edgeStates[i] != 0) continue;
+        
+        if (!deductLightweight(i, 1, false)) {
+            RECORD_AC3_TIME(155); // Full Sim-Lookahead
+            if (!setEdgeState(i, -1)) return -1;
+            RECORD_AC3_TIME(-1);
+            return 1;
+        }
+        if (edgeStates[i] != 0) continue;
+        
+        if (!deductLightweight(i, -1, false)) {
+            RECORD_AC3_TIME(155);
+            if (!setEdgeState(i, 1)) return -1;
+            RECORD_AC3_TIME(-1);
+            return 1;
         }
     }
     return changed ? 1 : 0;
@@ -3527,10 +3621,10 @@ RECORD_AC3_TIME(126);
         if (cellStackTop == 0 && dotStackTop == 0 && !cycleChanged) {
             // Only when absolutely everything is exhausted, run the O(V+E) Bridge Detection
             if (enableAdvancedAC3) {
-                if (ac3_current_difficulty_limit >= DIFF_GLOBAL_3) { RECORD_AC3_TIME(152); if (!runUniversalParityCheck()) AC3_RETURN_FALSE; }
+                if (ac3_current_difficulty_limit >=DIFF_GLOBAL_3) { RECORD_AC3_TIME(152); if (!runUniversalParityCheck()) AC3_RETURN_FALSE; }
             }
             
-            if (ac3_current_difficulty_limit >= DIFF_EXTREME && enable_deduction_logging && !restrictLogicToLocal) {
+            if (ac3_current_difficulty_limit >=DIFF_EXTREME && !isDoingLookahead && !restrictLogicToLocal) {
                 int edges_before = 0;
                 for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
                 
@@ -3579,16 +3673,26 @@ static inline bool deductIncremental() {
             return false;
         }
         
-        // Lightweight simulative Look-ahead
-        if (!isDoingLookahead && ac3_current_difficulty_limit >= DIFF_GLOBAL_4) {
-            int ret = applyLightweightLookahead();
+        // Lightweight simulative Look-ahead (3-tier)
+        if (!isDoingLookahead) {
+            int ret = 0;
+            if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
+                // Tier 1: Loop detection only from endpoints (difficulty 6)
+                ret = applyLightweightLookahead_LoopOnly();
+            } else if (ac3_current_difficulty_limit >= DIFF_EXTREME) {
+                // Tier 2: Contradiction detection from endpoints (difficulty 8)
+                ret = applyLightweightLookahead_Endpoint();
+            } else if (ac3_current_difficulty_limit >= DIFF_GLOBAL_4) {
+                // Tier 3: Full sim-lookahead on all edges (difficulty 9)
+                ret = applyLightweightLookahead_Full();
+            }
             if (ret == -1) {
                 perf_ac3 += emscripten_get_now() - t0;
                 return false; // Contradiction
             }
             if (ret == 1) {
-                // Progress made, run AC-3 propagation again
-                continue;
+                // Progress made! Break out to return control to difficulty escalation (level 1)
+                break;
             }
         }
         break;
@@ -3621,7 +3725,17 @@ bool deduct() {
         }
     }
     
-    return deductIncremental();
+    ac3_current_difficulty_limit = 1;
+    while (ac3_current_difficulty_limit <= solver_max_difficulty) {
+        ac3_progress_flag = false;
+        if (!deductIncremental()) return false;
+        if (ac3_progress_flag) {
+            ac3_current_difficulty_limit = 1;
+        } else {
+            ac3_current_difficulty_limit++;
+        }
+    }
+    return true;
 }
 
 // SOLVED STATE VERIFICATION
@@ -4104,26 +4218,28 @@ int check_human_solvability() {
             }
         } else {
             // Lightweight difficulty escalation: try easy rules first, escalate only when stuck
-            // Also track consecutive hard breakthroughs to ensure good "tokiaji" (solving flow)
+            // Enforce "tokiaji": after a hard breakthrough (diff >= 7), at least MIN_EASY_CASCADE easy steps are required
             #define HARD_TECHNIQUE_THRESHOLD DIFF_GLOBAL_3  // IO Coloring, LUT, GF2, Lookahead
-            #define MAX_CONSECUTIVE_HARD 1                   // Max consecutive hard breakthroughs allowed
-            int consecutive_hard = 0;
+            #define MIN_EASY_CASCADE 5                      // Minimum easy steps required after a hard breakthrough
+            int hard_breakthrough_count = 0;
+            int easy_cascade_count = 0;
             
             ac3_current_difficulty_limit = 1;
-            while (ac3_current_difficulty_limit <= DIFF_LOOKAHEAD) {
+            while (ac3_current_difficulty_limit <= solver_max_difficulty) {
                 ac3_progress_flag = false;
                 if (!deductIncremental()) return 0;
                 
                 if (ac3_progress_flag) {
                     if (ac3_current_difficulty_limit >= HARD_TECHNIQUE_THRESHOLD) {
                         // Hard technique was needed for this breakthrough
-                        consecutive_hard++;
-                        if (consecutive_hard > MAX_CONSECUTIVE_HARD) {
-                            return -3; // Solvable but poor tokiaji: too many consecutive hard steps
+                        if (hard_breakthrough_count > 0 && easy_cascade_count < MIN_EASY_CASCADE) {
+                            return -3; // Solvable but poor tokiaji: insufficient easy cascade after hard step
                         }
+                        hard_breakthrough_count++;
+                        easy_cascade_count = 0;
                     } else {
-                        // Easy/medium technique made progress - good cascade! Reset streak.
-                        consecutive_hard = 0;
+                        // Easy/medium technique made progress - accumulate easy cascade step count
+                        easy_cascade_count++;
                     }
                     ac3_current_difficulty_limit = 1; // Progress! Reset to easy rules
                     progressInPhase = true;
@@ -5365,5 +5481,6 @@ int analyze_puzzle(const char* difficulty) {
     debug_compare_solved = false;
     enable_deduction_logging = false;
     ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
+    solver_max_difficulty = DIFF_LOOKAHEAD;
     return result;
 }
