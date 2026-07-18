@@ -3648,17 +3648,7 @@ RECORD_AC3_TIME(126);
             }
             
             if (cellStackTop == 0 && dotStackTop == 0) {
-                if (enableGF2 && !isDoingLookahead && gf2_queue_head < gf2_queue_tail) {
-                    if (ac3_current_difficulty_limit >= DIFF_GLOBAL_4) { 
-                        RECORD_AC3_TIME(151); 
-                        if (!batchUpdateGlobalGF2()) AC3_RETURN_FALSE; 
-                        continue; 
-                    }
-                    break; // Blocked by difficulty, stop inferring
-                }
-                if (!enableGF2 || isDoingLookahead || gf2_queue_head == gf2_queue_tail) {
-                    break;
-                }
+                break;
             }
         }
     }
@@ -3676,15 +3666,15 @@ static inline bool deductIncremental() {
         // Lightweight simulative Look-ahead (3-tier)
         if (!isDoingLookahead) {
             int ret = 0;
-            if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
-                // Tier 1: Loop detection only from endpoints (difficulty 6)
-                ret = applyLightweightLookahead_LoopOnly();
+            if (ac3_current_difficulty_limit >= DIFF_GLOBAL_4) {
+                // Tier 3: Full sim-lookahead on all edges (difficulty 9)
+                ret = applyLightweightLookahead_Full();
             } else if (ac3_current_difficulty_limit >= DIFF_EXTREME) {
                 // Tier 2: Contradiction detection from endpoints (difficulty 8)
                 ret = applyLightweightLookahead_Endpoint();
-            } else if (ac3_current_difficulty_limit >= DIFF_GLOBAL_4) {
-                // Tier 3: Full sim-lookahead on all edges (difficulty 9)
-                ret = applyLightweightLookahead_Full();
+            } else if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
+                // Tier 1: Loop detection only from endpoints (difficulty 6)
+                ret = applyLightweightLookahead_LoopOnly();
             }
             if (ret == -1) {
                 perf_ac3 += emscripten_get_now() - t0;
@@ -3693,6 +3683,19 @@ static inline bool deductIncremental() {
             if (ret == 1) {
                 // Progress made! Break out to return control to difficulty escalation (level 1)
                 break;
+            }
+            
+            // GF2 Parity Check as last resort (Difficulty 9)
+            if (enableGF2 && gf2_queue_head < gf2_queue_tail && ac3_current_difficulty_limit >= DIFF_GLOBAL_4) {
+                RECORD_AC3_TIME(151);
+                if (!batchUpdateGlobalGF2()) {
+                    perf_ac3 += emscripten_get_now() - t0;
+                    return false;
+                }
+                RECORD_AC3_TIME(-1);
+                if (ac3_progress_flag) {
+                    break;
+                }
             }
         }
         break;
