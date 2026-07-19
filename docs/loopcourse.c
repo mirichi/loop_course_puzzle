@@ -342,6 +342,20 @@ int ac3_current_rule_id = -1;
 double ac3_t_start = 0;
 int ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
 int solver_max_difficulty = DIFF_LOOKAHEAD;
+int last_solved_max_difficulty = 0;
+
+static int get_min_required_difficulty(const char* difficulty) {
+    if (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0) {
+        return 1;
+    } else if (strcmp(difficulty, "Medium") == 0 || strcmp(difficulty, "medium") == 0) {
+        return DIFF_GLOBAL_2; // 6以上 (早期閉路禁止, Jordan Curve, 軽量Lookahead LoopOnly等)
+    } else if (strcmp(difficulty, "Hard") == 0 || strcmp(difficulty, "hard") == 0) {
+        return DIFF_GLOBAL_3; // 7以上 (または DIFF_EXTREME 8)
+    } else if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
+        return DIFF_EXTREME; // 8以上 (LUT推論, 軽量Lookahead Endpoint, GF2方程式パリティ等)
+    }
+    return 1;
+}
 
 EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
     switch (idx) {
@@ -889,7 +903,7 @@ static inline bool isAdjacentToLine(int edgeIdx) {
     return false;
 }
 
-// Mode 1: Loop detection only, from line endpoints (Difficulty 6 = DIFF_GLOBAL_2)
+// Mode 1: Loop detection only, from line endpoints (Difficulty 7 = DIFF_GLOBAL_3)
 int applyLightweightLookahead_LoopOnly() {
     bool changed = false;
     for (int i = 0; i < numEdges; i++) {
@@ -2040,9 +2054,11 @@ static bool applyInsideOutsideColoring() {
         if (colorDsuFind(cell1) == colorDsuFind(cell2)) {
             // Must be same color -> MUST be cross
             if (!setEdgeState(e, -1)) return false;
+            return true; // Return early after 1 deduction
         } else if (colorDsuFind(cell1) == colorDsuFind(cell2 + totalNodes)) {
             // Must be different color -> MUST be line
             if (!setEdgeState(e, 1)) return false;
+            return true; // Return early after 1 deduction
         }
     }
     
@@ -3672,8 +3688,8 @@ static inline bool deductIncremental() {
             } else if (ac3_current_difficulty_limit >= DIFF_EXTREME) {
                 // Tier 2: Contradiction detection from endpoints (difficulty 8)
                 ret = applyLightweightLookahead_Endpoint();
-            } else if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
-                // Tier 1: Loop detection only from endpoints (difficulty 6)
+            } else if (ac3_current_difficulty_limit >= DIFF_GLOBAL_3) {
+                // Tier 1: Loop detection only from endpoints (difficulty 7)
                 ret = applyLightweightLookahead_LoopOnly();
             }
             if (ret == -1) {
@@ -4162,7 +4178,8 @@ double calculateZigzagBendPenalty() {
             // Guarantee maximality: ensure previous element did not alternate
             int prevIdx = (i - 1 + compCount) % compCount;
             if (compDirs[prevIdx] != compDirs[(i + 1) % compCount]) {
-                totalPenalty += 150.0 * pow(2.5, L - 4);
+                double effectiveL = (L > 8) ? 8.0 : (double)L;
+                totalPenalty += 150.0 * pow(2.5, effectiveL - 4.0);
             }
         }
     }
@@ -4179,6 +4196,7 @@ int lutEdgesTotal = 0;
 int lookaheadForcedEdgesTotal = 0;
 
 int check_human_solvability() {
+    last_solved_max_difficulty = 1;
     dsuInitFromCurrent();
     clearStacks();
     
@@ -4221,8 +4239,8 @@ int check_human_solvability() {
             }
         } else {
             // Lightweight difficulty escalation: try easy rules first, escalate only when stuck
-            // Enforce "tokiaji": after a hard breakthrough (diff >= 7), at least MIN_EASY_CASCADE easy steps are required
-            #define HARD_TECHNIQUE_THRESHOLD DIFF_GLOBAL_3  // IO Coloring, LUT, GF2, Lookahead
+            // Enforce "tokiaji": after a hard breakthrough (diff >= threshold), at least MIN_EASY_CASCADE easy steps are required
+            int hard_technique_threshold = (solver_max_difficulty >= DIFF_GLOBAL_4) ? DIFF_EXTREME : DIFF_GLOBAL_3;
             #define MIN_EASY_CASCADE 5                      // Minimum easy steps required after a hard breakthrough
             int hard_breakthrough_count = 0;
             int easy_cascade_count = 0;
@@ -4233,7 +4251,10 @@ int check_human_solvability() {
                 if (!deductIncremental()) return 0;
                 
                 if (ac3_progress_flag) {
-                    if (ac3_current_difficulty_limit >= HARD_TECHNIQUE_THRESHOLD) {
+                    if (ac3_current_difficulty_limit > last_solved_max_difficulty) {
+                        last_solved_max_difficulty = ac3_current_difficulty_limit;
+                    }
+                    if (ac3_current_difficulty_limit >= hard_technique_threshold) {
                         // Hard technique was needed for this breakthrough
                         if (hard_breakthrough_count > 0 && easy_cascade_count < MIN_EASY_CASCADE) {
                             return -3; // Solvable but poor tokiaji: insufficient easy cascade after hard step
@@ -4633,6 +4654,9 @@ static void generateRandomLoop() {
         } else if (totalCells <= 144) {
             fillRatioMin = 0.46;
             fillRatioMax = 0.58;
+        } else if (totalCells >= 400) {
+            fillRatioMin = 0.45;
+            fillRatioMax = 0.55;
         }
 
         int targetInsideCount = (int)(totalCells * (fillRatioMin + ((double)rand() / RAND_MAX) * (fillRatioMax - fillRatioMin)));
@@ -4841,53 +4865,64 @@ static void generateRandomLoop() {
 
             genCells[cr][cc] = 1;
 
-            // Hole filling BFS
-            memset(visitedCells, 0, sizeof(visitedCells));
-            int qTail = 0;
-            for (int r = 0; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    if (genCells[r][c] == 0) {
-                        bool isBorder = (r == 0 || r == rows - 1 || c == 0 || c == cols - 1);
-                        if (isBorder) {
-                            queueR[qTail] = r;
-                            queueC[qTail] = c;
-                            qTail++;
-                            visitedCells[r][c] = true;
-                        }
-                    }
-                }
-            }
-
-            int qHead = 0;
-            while (qHead < qTail) {
-                int r = queueR[qHead];
-                int c = queueC[qHead];
-                qHead++;
-                for (int i = 0; i < 4; i++) {
-                    int nr = r + dr[i];
-                    int nc = c + dc[i];
-                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
-                        if (genCells[nr][nc] == 0 && !visitedCells[nr][nc]) {
-                            visitedCells[nr][nc] = true;
-                            queueR[qTail] = nr;
-                            queueC[qTail] = nc;
-                            qTail++;
-                        }
-                    }
-                }
-            }
-
+            // Hole filling BFS (only needed when insideNeighbors > 1, because extending a tip (1 neighbor) cannot enclose a new hole)
             static int filledR[MAX_CELLS];
             static int filledC[MAX_CELLS];
             int filledCount = 0;
+            
+            int chosenInsideNeighbors = 0;
+            for (int i = 0; i < 4; i++) {
+                int nr = cr + dr[i];
+                int nc = cc + dc[i];
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && genCells[nr][nc] == 1) {
+                    chosenInsideNeighbors++;
+                }
+            }
 
-            for (int r = 0; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    if (genCells[r][c] == 0 && !visitedCells[r][c]) {
-                        genCells[r][c] = 1;
-                        filledR[filledCount] = r;
-                        filledC[filledCount] = c;
-                        filledCount++;
+            if (chosenInsideNeighbors > 1) {
+                memset(visitedCells, 0, sizeof(visitedCells));
+                int qTail = 0;
+                for (int r = 0; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        if (genCells[r][c] == 0) {
+                            bool isBorder = (r == 0 || r == rows - 1 || c == 0 || c == cols - 1);
+                            if (isBorder) {
+                                queueR[qTail] = r;
+                                queueC[qTail] = c;
+                                qTail++;
+                                visitedCells[r][c] = true;
+                            }
+                        }
+                    }
+                }
+
+                int qHead = 0;
+                while (qHead < qTail) {
+                    int r = queueR[qHead];
+                    int c = queueC[qHead];
+                    qHead++;
+                    for (int i = 0; i < 4; i++) {
+                        int nr = r + dr[i];
+                        int nc = c + dc[i];
+                        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                            if (genCells[nr][nc] == 0 && !visitedCells[nr][nc]) {
+                                visitedCells[nr][nc] = true;
+                                queueR[qTail] = nr;
+                                queueC[qTail] = nc;
+                                qTail++;
+                            }
+                        }
+                    }
+                }
+
+                for (int r = 0; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        if (genCells[r][c] == 0 && !visitedCells[r][c]) {
+                            genCells[r][c] = 1;
+                            filledR[filledCount] = r;
+                            filledC[filledCount] = c;
+                            filledCount++;
+                        }
                     }
                 }
             }
@@ -5055,6 +5090,7 @@ static bool checkSolvability(const char* difficulty) {
         }
         
         if (deductSuccess && solvedSuccess && allDecided) {
+            last_solved_max_difficulty = 1;
             result = 1;
         } else {
             result = 0;
@@ -5113,14 +5149,20 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
     staticRuleEdgesTotal = 0;
     lutEdgesTotal = 0;
     
+    int totalCells = rows * cols;
+    static int8_t targetEdgeStates[MAX_EDGES];
+    int pairCount = 0;
+    
     printf("[C Debug] Starting generate_puzzle_wasm. diff=%s, rows=%d, cols=%d\n", difficulty, rows, cols);
     set_solver_difficulty(difficulty);
 
     // 1. Generate a random solved loop and calculate target clues until initial board is solvable
-    bool initSolvable = false;
+    bool outerDone = false;
     int generateAttempts = 0;
-    while (!initSolvable && generateAttempts < 200) {
-        generateAttempts++;
+    while (!outerDone && generateAttempts < 200) {
+        bool initSolvable = false;
+        while (!initSolvable && generateAttempts < 200) {
+            generateAttempts++;
         clock_t t0 = clock();
 #ifdef __EMSCRIPTEN__
         EM_ASM({
@@ -5168,7 +5210,6 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
     }
 
     // Store target loop and clues
-    static int8_t targetEdgeStates[MAX_EDGES];
     memcpy(targetEdgeStates, edgeStates, numEdges);
     memcpy(dbgTargetEdges, edgeStates, numEdges);
     hasDbgTarget = true;
@@ -5179,7 +5220,6 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
     else if (strcmp(difficulty, "Medium") == 0 || strcmp(difficulty, "medium") == 0) keepRatio = 0.58;
     else keepRatio = 0.0; // Hard and Master will minimize to the limit
 
-    int totalCells = rows * cols;
     int targetKeepCount = (int)(totalCells * keepRatio);
     
     // Group cells into 180-degree rotationally symmetric pairs
@@ -5190,7 +5230,7 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
     } CellPair;
     
     static CellPair pairs[MAX_CELLS];
-    int pairCount = 0;
+    pairCount = 0;
     static bool paired[MAX_CELLS];
     memset(paired, 0, sizeof(paired));
     
@@ -5344,9 +5384,14 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
     printf("[C Generator] Finished symmetric minimization! Final clues remaining: %d/%d (%d%%) | FastPath: %d/%d checks | LookaheadTests: %d | ForcedEdges: %d | StaticEdges: %d | LUTEdges: %d\n", 
            currentClueCount, totalCells, (currentClueCount * 100) / totalCells, fastPathCount, solvabilityChecks, lookaheadEdgeTests, lookaheadForcedEdgesTotal, staticRuleEdgesTotal, lutEdgesTotal);
 
-    // Pass 3: Asymmetric Single Clue Removal for Master ONLY
-    if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
-        printf("[C Generator] Starting Asymmetric Single Clue Removal for %s...\n", difficulty);
+    // Pass 3: Asymmetric Single Clue Removal (For Master OR when min required difficulty is not yet reached)
+    int minReqDiff = get_min_required_difficulty(difficulty);
+    checkSolvability(difficulty);
+    printf("[C Generator] Difficulty Check after Pass 2: Reached Max Diff = %d, Required Min Diff = %d\n", last_solved_max_difficulty, minReqDiff);
+
+    bool isEasy = (strcmp(difficulty, "Easy") == 0 || strcmp(difficulty, "easy") == 0);
+    if (!isEasy && (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0 || last_solved_max_difficulty < minReqDiff)) {
+        printf("[C Generator] Starting Asymmetric Single Clue Removal Pass 3 for %s (target min diff: %d)...\n", difficulty, minReqDiff);
         
         int singleClues[MAX_CELLS];
         int singleCount = 0;
@@ -5364,6 +5409,9 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
             singleClues[jdx] = temp;
         }
         
+        int consecutiveFailures = 0;
+        int maxConsecutiveFailures = (totalCells > 400) ? 15 : 30;
+
         for (int idx = 0; idx < singleCount; idx++) {
             int cell = singleClues[idx];
             int8_t savedClue = clues[cell];
@@ -5375,12 +5423,28 @@ static void generate_puzzle_wasm_internal(const char* difficulty) {
             
             if (singleSolvable) {
                 currentClueCount--;
-                printf("[C Generator] Asymmetric removal successful! Clues remaining: %d\n", currentClueCount);
+                consecutiveFailures = 0;
+                printf("[C Generator] Pass 3 removal successful! Clues remaining: %d | Reached Diff: %d\n", currentClueCount, last_solved_max_difficulty);
             } else {
                 clues[cell] = savedClue; // Rollback
+                consecutiveFailures++;
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    printf("[C Generator] Early stopping Pass 3 after %d consecutive failed removal attempts.\n", consecutiveFailures);
+                    break;
+                }
             }
         }
-        printf("[C Generator] Finished asymmetric minimization! Final clues remaining: %d/%d\n", currentClueCount, totalCells);
+        checkSolvability(difficulty);
+        printf("[C Generator] Finished asymmetric minimization! Final clues remaining: %d/%d | Final Max Diff Reached: %d / Min Required: %d\n",
+               currentClueCount, totalCells, last_solved_max_difficulty, minReqDiff);
+    }
+
+    if (last_solved_max_difficulty < minReqDiff && generateAttempts < 50) {
+        printf("[C Generator] Attempt %d failed minimum difficulty condition (%d < %d). Retrying with a new loop...\n",
+               generateAttempts, last_solved_max_difficulty, minReqDiff);
+        continue;
+    }
+    outerDone = true;
     }
 
 #ifdef __EMSCRIPTEN__
