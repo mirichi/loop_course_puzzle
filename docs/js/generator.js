@@ -16,7 +16,7 @@ let wasmSetSolverDifficulty = null;
 
 // Asynchronously load the LoopCourse WebAssembly module with strict cache-busting
 if (typeof createLoopCourseModule === 'function') {
-  const wasmVersion = "20260624_v49";
+  const wasmVersion = "20260722_v2";
   createLoopCourseModule({
     locateFile: function(path, prefix) {
       if (path.endsWith('.wasm')) {

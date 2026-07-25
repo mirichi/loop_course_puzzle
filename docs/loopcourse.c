@@ -58,10 +58,8 @@ static bool hasDbgTarget = false;
 static int8_t genCells[MAX_ROWS][MAX_COLS];
 
 // Feature Toggles for Benchmarking
-bool enableAdvancedAC3 = true;
 bool restrictLogicToLocal = false;
 bool enableGF2 = true;
-bool prioritizeGF2 = true;
 
 // Performance Tracking
 double perf_static = 0;
@@ -76,12 +74,6 @@ EMSCRIPTEN_KEEPALIVE double get_perf_ac3() { return perf_ac3; }
 EMSCRIPTEN_KEEPALIVE double get_perf_gf2() { return perf_gf2; }
 EMSCRIPTEN_KEEPALIVE double get_perf_lookahead() { return perf_lookahead; }
 EMSCRIPTEN_KEEPALIVE void reset_perf() { perf_static = 0; perf_lut = 0; perf_ac3 = 0; perf_gf2 = 0; perf_lookahead = 0; }
-
-
-EMSCRIPTEN_KEEPALIVE
-void set_prioritize_gf2(bool enabled) {
-    prioritizeGF2 = enabled;
-}
 
 EMSCRIPTEN_KEEPALIVE
 void set_solver_difficulty(const char* difficulty) {
@@ -110,11 +102,6 @@ void set_solver_difficulty(const char* difficulty) {
 }
 
 
-// pre-allocated stack for backtracking search to avoid constant allocations
-#define MAX_BACKTRACK_DEPTH 200
-static int8_t backupStack[MAX_BACKTRACK_DEPTH][MAX_EDGES];
-static int8_t backupAfterDeductStack[MAX_BACKTRACK_DEPTH][MAX_EDGES];
-
 extern int ac3_current_rule_id;
 extern int ac3_rule_hit_counts[256];
 #define RECORD_AC3_HIT() do { \
@@ -141,14 +128,6 @@ static int global_gf2_words;
 static int gf2_update_queue[MAX_EDGES];
 static int gf2_queue_head = 0;
 static int gf2_queue_tail = 0;
-
-static uint64_t backupStackGF2Matrix[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS][MAX_GF2_WORDS];
-static uint8_t backupStackGF2Constants[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
-static int backupStackGF2Pivot[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
-
-static uint64_t backupAfterDeductStackGF2Matrix[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS][MAX_GF2_WORDS];
-static uint8_t backupAfterDeductStackGF2Constants[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
-static int backupAfterDeductStackGF2Pivot[MAX_BACKTRACK_DEPTH][MAX_GF2_EQS];
 
 static uint64_t check_gf2_matrix_backup[MAX_GF2_EQS][MAX_GF2_WORDS];
 static uint8_t check_gf2_constants_backup[MAX_GF2_EQS];
@@ -1094,7 +1073,6 @@ static inline int getSafeEdgeState(int idx) {
 
 // --- NEW 2-3 CORNER LOGIC ---
 static inline bool check23CornerLogic(int r, int c) {
-    if (!enableAdvancedAC3) return true;
     int clue = clues[r * cols + c];
     if (clue != 2) return true;
 
@@ -1162,7 +1140,6 @@ static inline bool check23CornerLogic(int r, int c) {
 }
 
 static inline bool check22CornerLogic(int r, int c) {
-    if (!enableAdvancedAC3) return true;
     int clue = clues[r * cols + c];
     if (clue != 2) return true;
 
@@ -1472,7 +1449,6 @@ bool applyStaticRules_internal() {
                 if (!setEdgeState(getVEdgeIndex(r, c), -1)) return false;
                 if (!setEdgeState(getHEdgeIndex(r + 1, c), -1)) return false;
                 if (!setEdgeState(getVEdgeIndex(r, c + 1), -1)) return false;
-                continue;
             }
             
             // Rule 2.1: Orthogonally Adjacent 3-3 Cells
@@ -1773,22 +1749,54 @@ bool applyStaticRules_internal() {
                             int b3 = getHEdgeIndex(nr + 1, nc);
                             int l3 = getVEdgeIndex(nr, nc);
                             
-                            if (dir == 0) {
+                            if (dir == 0) { // 0's top is 3 (nr = r-1)
                                 if (!setEdgeState(t3, 1)) return false;
                                 if (!setEdgeState(r3, 1)) return false;
                                 if (!setEdgeState(l3, 1)) return false;
-                            } else if (dir == 1) {
+                                if (c > 0) {
+                                    int extL = getHEdgeIndex(r, c - 1);
+                                    if (extL != numEdges && !setEdgeState(extL, 1)) return false;
+                                }
+                                if (c + 1 < cols) {
+                                    int extR = getHEdgeIndex(r, c + 1);
+                                    if (extR != numEdges && !setEdgeState(extR, 1)) return false;
+                                }
+                            } else if (dir == 1) { // 0's bottom is 3 (nr = r+1)
                                 if (!setEdgeState(b3, 1)) return false;
                                 if (!setEdgeState(r3, 1)) return false;
                                 if (!setEdgeState(l3, 1)) return false;
-                            } else if (dir == 2) {
+                                if (c > 0) {
+                                    int extL = getHEdgeIndex(r + 1, c - 1);
+                                    if (extL != numEdges && !setEdgeState(extL, 1)) return false;
+                                }
+                                if (c + 1 < cols) {
+                                    int extR = getHEdgeIndex(r + 1, c + 1);
+                                    if (extR != numEdges && !setEdgeState(extR, 1)) return false;
+                                }
+                            } else if (dir == 2) { // 0's left is 3 (nc = c-1)
                                 if (!setEdgeState(t3, 1)) return false;
                                 if (!setEdgeState(b3, 1)) return false;
                                 if (!setEdgeState(l3, 1)) return false;
-                            } else if (dir == 3) {
+                                if (r > 0) {
+                                    int extT = getVEdgeIndex(r - 1, c);
+                                    if (extT != numEdges && !setEdgeState(extT, 1)) return false;
+                                }
+                                if (r + 1 < rows) {
+                                    int extB = getVEdgeIndex(r + 1, c);
+                                    if (extB != numEdges && !setEdgeState(extB, 1)) return false;
+                                }
+                            } else if (dir == 3) { // 0's right is 3 (nc = c+1)
                                 if (!setEdgeState(t3, 1)) return false;
                                 if (!setEdgeState(b3, 1)) return false;
                                 if (!setEdgeState(r3, 1)) return false;
+                                if (r > 0) {
+                                    int extT = getVEdgeIndex(r - 1, c + 1);
+                                    if (extT != numEdges && !setEdgeState(extT, 1)) return false;
+                                }
+                                if (r + 1 < rows) {
+                                    int extB = getVEdgeIndex(r + 1, c + 1);
+                                    if (extB != numEdges && !setEdgeState(extB, 1)) return false;
+                                }
                             }
                         }
                     }
@@ -2362,6 +2370,59 @@ static bool deductJordanCurveParity() {
     return true;
 }
 
+static inline bool checkAndApplyDiagonal1s(int curr_r, int curr_c, int dr, int dc) {
+    if (dr == -1 && dc == 1) { // Up-Right (requires BOTH North and East to be 1)
+        if (curr_r - 1 >= 0 && getClue(curr_r - 1, curr_c) == 1 &&
+            curr_c + 1 < cols && getClue(curr_r, curr_c + 1) == 1) {
+            int h1 = getHEdgeIndex(curr_r - 1, curr_c);
+            int v1 = getVEdgeIndex(curr_r - 1, curr_c);
+            int v2 = getVEdgeIndex(curr_r, curr_c + 2);
+            int h2 = getHEdgeIndex(curr_r + 1, curr_c + 1);
+            if (h1 != numEdges && !setEdgeState(h1, -1)) return false;
+            if (v1 != numEdges && !setEdgeState(v1, -1)) return false;
+            if (v2 != numEdges && !setEdgeState(v2, -1)) return false;
+            if (h2 != numEdges && !setEdgeState(h2, -1)) return false;
+        }
+    } else if (dr == 1 && dc == 1) { // Down-Right (requires BOTH South and East to be 1)
+        if (curr_r + 1 < rows && getClue(curr_r + 1, curr_c) == 1 &&
+            curr_c + 1 < cols && getClue(curr_r, curr_c + 1) == 1) {
+            int h1 = getHEdgeIndex(curr_r + 2, curr_c);
+            int v1 = getVEdgeIndex(curr_r + 1, curr_c);
+            int v2 = getVEdgeIndex(curr_r, curr_c + 2);
+            int h2 = getHEdgeIndex(curr_r, curr_c + 1);
+            if (h1 != numEdges && !setEdgeState(h1, -1)) return false;
+            if (v1 != numEdges && !setEdgeState(v1, -1)) return false;
+            if (v2 != numEdges && !setEdgeState(v2, -1)) return false;
+            if (h2 != numEdges && !setEdgeState(h2, -1)) return false;
+        }
+    } else if (dr == -1 && dc == -1) { // Up-Left (requires BOTH North and West to be 1)
+        if (curr_r - 1 >= 0 && getClue(curr_r - 1, curr_c) == 1 &&
+            curr_c - 1 >= 0 && getClue(curr_r, curr_c - 1) == 1) {
+            int h1 = getHEdgeIndex(curr_r - 1, curr_c);
+            int v1 = getVEdgeIndex(curr_r - 1, curr_c + 1);
+            int v2 = getVEdgeIndex(curr_r, curr_c - 1);
+            int h2 = getHEdgeIndex(curr_r + 1, curr_c - 1);
+            if (h1 != numEdges && !setEdgeState(h1, -1)) return false;
+            if (v1 != numEdges && !setEdgeState(v1, -1)) return false;
+            if (v2 != numEdges && !setEdgeState(v2, -1)) return false;
+            if (h2 != numEdges && !setEdgeState(h2, -1)) return false;
+        }
+    } else if (dr == 1 && dc == -1) { // Down-Left (requires BOTH South and West to be 1)
+        if (curr_r + 1 < rows && getClue(curr_r + 1, curr_c) == 1 &&
+            curr_c - 1 >= 0 && getClue(curr_r, curr_c - 1) == 1) {
+            int h1 = getHEdgeIndex(curr_r + 2, curr_c);
+            int v1 = getVEdgeIndex(curr_r + 1, curr_c + 1);
+            int v2 = getVEdgeIndex(curr_r, curr_c - 1);
+            int h2 = getHEdgeIndex(curr_r, curr_c - 1);
+            if (h1 != numEdges && !setEdgeState(h1, -1)) return false;
+            if (v1 != numEdges && !setEdgeState(v1, -1)) return false;
+            if (v2 != numEdges && !setEdgeState(v2, -1)) return false;
+            if (h2 != numEdges && !setEdgeState(h2, -1)) return false;
+        }
+    }
+    return true;
+}
+
 // LOGICAL DEDUCTION ENGINE - INCREMENTAL PASS (AC-3 local constraint propagation)
 static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
     int curr_r = startR;
@@ -2407,6 +2468,9 @@ static bool propagateDiagonal2s(int startR, int startC, int dr, int dc) {
         
         if (clue == 2) {
             // 2のセルの場合、対角の角もXOR状態となり、次のセルへ伝搬する
+            RECORD_AC3_TIME(137);
+            if (!checkAndApplyDiagonal1s(curr_r, curr_c, dr, dc)) return false;
+
             int oppEdge1 = numEdges, oppEdge2 = numEdges;
             if (dr == 1 && dc == 1) { 
                 oppEdge1 = getHEdgeIndex(curr_r + 1, curr_c);
@@ -3173,18 +3237,16 @@ RECORD_AC3_TIME(115);
                 int c = dotIdx % (cols + 1);
                 
                 // --- NEW GENERALIZED 1-1 / 1-3 DOT BORDER LOGIC ---
-                if (enableAdvancedAC3) {
-                    int prev_rule_id = ac3_current_rule_id;
-RECORD_AC3_TIME(138);
-                    ac3_current_rule_id = 138;
-                    
-                    bool res = checkDotBorderLogic(r, c);
-                    
-                    ac3_current_rule_id = prev_rule_id;
-                    RECORD_AC3_TIME(prev_rule_id);
-                    
-                    if (!res) AC3_RETURN_FALSE;
-                }
+                int prev_rule_id = ac3_current_rule_id;
+                RECORD_AC3_TIME(138);
+                ac3_current_rule_id = 138;
+                
+                bool res = checkDotBorderLogic(r, c);
+                
+                ac3_current_rule_id = prev_rule_id;
+                RECORD_AC3_TIME(prev_rule_id);
+                
+                if (!res) AC3_RETURN_FALSE;
                 // --------------------------------------------------
 
                 int dotEdges[4];
@@ -3636,9 +3698,7 @@ RECORD_AC3_TIME(126);
         
         if (cellStackTop == 0 && dotStackTop == 0 && !cycleChanged) {
             // Only when absolutely everything is exhausted, run the O(V+E) Bridge Detection
-            if (enableAdvancedAC3) {
-                if (ac3_current_difficulty_limit >=DIFF_GLOBAL_3) { RECORD_AC3_TIME(152); if (!runUniversalParityCheck()) AC3_RETURN_FALSE; }
-            }
+            if (ac3_current_difficulty_limit >=DIFF_GLOBAL_3) { RECORD_AC3_TIME(152); if (!runUniversalParityCheck()) AC3_RETURN_FALSE; }
             
             if (ac3_current_difficulty_limit >=DIFF_EXTREME && !isDoingLookahead && !restrictLogicToLocal) {
                 int edges_before = 0;
@@ -3862,175 +3922,7 @@ static int foundSolutionsCount = 0;
 static int explorationSteps = 0;
 static bool isTimeout = false;
 
-static void backtrack(int depth, bool findSingle, int maxSteps) {
-    explorationSteps++;
-    if (explorationSteps > maxSteps) {
-        isTimeout = true;
-        return;
-    }
 
-    if (depth >= MAX_BACKTRACK_DEPTH) {
-        return;
-    }
-
-    // Save global edge states, DSU history
-    memcpy(backupStack[depth], edgeStates, numEdges);
-    memcpy(backupStackGF2Matrix[depth], global_gf2_matrix, sizeof(global_gf2_matrix));
-    memcpy(backupStackGF2Constants[depth], global_gf2_constants, sizeof(global_gf2_constants));
-    memcpy(backupStackGF2Pivot[depth], global_gf2_pivot, sizeof(global_gf2_pivot));
-    int dsuCheckpoint = dsuHistoryCount;
-
-    // Run logical deduction rules: full pass at depth 0, incremental pass at depth > 0
-    if (depth == 0) {
-        if (!deduct()) {
-            memcpy(edgeStates, backupStack[depth], numEdges);
-            memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-            memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
-            memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-            gf2_queue_head = 0; gf2_queue_tail = 0;
-            clearStacks();
-            dsuRollback(dsuCheckpoint);
-            return;
-        }
-    } else {
-        if (!deductIncremental()) {
-            memcpy(edgeStates, backupStack[depth], numEdges);
-            memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-            memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
-            memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-            gf2_queue_head = 0; gf2_queue_tail = 0;
-            clearStacks();
-            dsuRollback(dsuCheckpoint);
-            return;
-        }
-    }
-
-    int undecidedIdx = -1;
-    for (int i = 0; i < numEdges; i++) {
-        if (edgeStates[i] == 0) {
-            undecidedIdx = i;
-            break;
-        }
-    }
-
-    if (undecidedIdx == -1) {
-        if (isSolved()) {
-            if (foundSolutionsCount < MAX_SOLUTIONS) {
-                int8_t* sol = foundSolutions[foundSolutionsCount++];
-                memcpy(sol, edgeStates, numEdges);
-            }
-        }
-        memcpy(edgeStates, backupStack[depth], numEdges);
-        memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-        memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
-        memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-        gf2_queue_head = 0; gf2_queue_tail = 0;
-        clearStacks();
-        dsuRollback(dsuCheckpoint);
-        return;
-    }
-
-    if (foundSolutionsCount >= 2 || (findSingle && foundSolutionsCount >= 1)) {
-        memcpy(edgeStates, backupStack[depth], numEdges);
-        memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-        memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
-        memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-        gf2_queue_head = 0; gf2_queue_tail = 0;
-        clearStacks();
-        dsuRollback(dsuCheckpoint);
-        return;
-    }
-
-    // Save state AFTER deduction
-    memcpy(backupAfterDeductStack[depth], edgeStates, numEdges);
-    memcpy(backupAfterDeductStackGF2Matrix[depth], global_gf2_matrix, sizeof(global_gf2_matrix));
-    memcpy(backupAfterDeductStackGF2Constants[depth], global_gf2_constants, sizeof(global_gf2_constants));
-    memcpy(backupAfterDeductStackGF2Pivot[depth], global_gf2_pivot, sizeof(global_gf2_pivot));
-    int dsuCheckpointAfterDeduct = dsuHistoryCount;
-
-    int branchIdx = -1;
-    int minUndecided = 999;
-
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            int clue = clues[r * cols + c];
-            if (clue != -1) {
-                int cellEdges[4];
-                getCellEdges(r, c, cellEdges);
-                int undecidedCount = 0;
-                int firstUndecided = -1;
-                
-                for (int j = 0; j < 4; j++) {
-                    if (edgeStates[cellEdges[j]] == 0) {
-                        undecidedCount++;
-                        if (firstUndecided == -1) {
-                            firstUndecided = cellEdges[j];
-                        }
-                    }
-                }
-                
-                if (undecidedCount > 0 && undecidedCount < minUndecided) {
-                    minUndecided = undecidedCount;
-                    branchIdx = firstUndecided;
-                    if (minUndecided == 1) {
-                        break; // Most constrained possible
-                    }
-                }
-            }
-        }
-        if (minUndecided == 1) {
-            break;
-        }
-    }
-
-    if (branchIdx == -1) {
-        branchIdx = undecidedIdx; // Fallback
-    }
-
-    // Try setting edge to 1 (line)
-    if (setEdgeState(branchIdx, 1)) {
-        backtrack(depth + 1, findSingle, maxSteps);
-    }
-    dsuRollback(dsuCheckpointAfterDeduct);
-    memcpy(edgeStates, backupAfterDeductStack[depth], numEdges);
-    memcpy(global_gf2_matrix, backupAfterDeductStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-    memcpy(global_gf2_constants, backupAfterDeductStackGF2Constants[depth], sizeof(global_gf2_constants));
-    memcpy(global_gf2_pivot, backupAfterDeductStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-    gf2_queue_head = 0; gf2_queue_tail = 0;
-    clearStacks();
-
-    if (foundSolutionsCount >= 2 || (findSingle && foundSolutionsCount >= 1) || isTimeout) {
-        dsuRollback(dsuCheckpoint);
-        memcpy(edgeStates, backupStack[depth], numEdges);
-        memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-        memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
-        memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-        gf2_queue_head = 0; gf2_queue_tail = 0;
-        clearStacks();
-        return;
-    }
-
-    // Try setting edge to -1 (cross)
-    if (setEdgeState(branchIdx, -1)) {
-        backtrack(depth + 1, findSingle, maxSteps);
-    }
-    dsuRollback(dsuCheckpointAfterDeduct);
-    memcpy(edgeStates, backupAfterDeductStack[depth], numEdges);
-    memcpy(global_gf2_matrix, backupAfterDeductStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-    memcpy(global_gf2_constants, backupAfterDeductStackGF2Constants[depth], sizeof(global_gf2_constants));
-    memcpy(global_gf2_pivot, backupAfterDeductStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-    gf2_queue_head = 0; gf2_queue_tail = 0;
-    clearStacks();
-    
-    // Cleanup to restore parent state
-    dsuRollback(dsuCheckpoint);
-    memcpy(edgeStates, backupStack[depth], numEdges);
-    memcpy(global_gf2_matrix, backupStackGF2Matrix[depth], sizeof(global_gf2_matrix));
-    memcpy(global_gf2_constants, backupStackGF2Constants[depth], sizeof(global_gf2_constants));
-    memcpy(global_gf2_pivot, backupStackGF2Pivot[depth], sizeof(global_gf2_pivot));
-    gf2_queue_head = 0; gf2_queue_tail = 0;
-    clearStacks();
-}
 
 double calculateConsecutive3Penalty() {
     double totalPenalty = 0.0;
@@ -4472,18 +4364,24 @@ int apply_lookahead_once() {
 EMSCRIPTEN_KEEPALIVE
 int solve_puzzle_wasm(bool findSingle, int maxSteps) {
     foundSolutionsCount = 0;
-    explorationSteps = 0;
-    isTimeout = false;
     memset(foundSolutions, 0, sizeof(foundSolutions));
 
-    // Initialize DSU and seed it with initial active edges (if any)
+    // Enable full heuristics (Lookahead, GF2, etc.) equivalent to analyze_puzzle
+    restrictLogicToLocal = false;
+    enableGF2 = true;
+    lookaheadMaxLimit = 100;
+    solver_max_difficulty = DIFF_LOOKAHEAD;
+
     dsuInitFromCurrent();
+    clearStacks();
 
-    backtrack(0, findSingle, maxSteps);
+    int result = check_human_solvability();
 
-    if (isTimeout) {
-        return -1; // timed out
+    if (result == 1) {
+        memcpy(foundSolutions[0], edgeStates, numEdges);
+        foundSolutionsCount = 1;
     }
+
     return foundSolutionsCount;
 }
 
@@ -5487,11 +5385,6 @@ void generate_puzzle_wasm(const char* difficulty) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void set_advanced_ac3(bool enable) {
-    enableAdvancedAC3 = enable;
-}
-
-EMSCRIPTEN_KEEPALIVE
 int get_lookahead_count() {
     return lookaheadEdgeTests;
 }
@@ -5515,31 +5408,7 @@ int analyze_puzzle(const char* difficulty) {
     
     lookaheadMaxLimit = 100;
     
-#ifdef DEBUG_MODE
-    // Solve first to get correct target solutions
-    extern int foundSolutionsCount;
-    extern int explorationSteps;
-    extern bool isTimeout;
-    extern int8_t foundSolutions[MAX_SOLUTIONS][MAX_EDGES];
-    extern void backtrack(int edgeIdx, bool findSingle, int maxSteps);
-    foundSolutionsCount = 0;
-    explorationSteps = 0;
-    isTimeout = false;
-    memset(foundSolutions, 0, sizeof(foundSolutions));
-    dsuInitFromCurrent();
-    backtrack(0, true, 1000000);
-    
-    if (foundSolutionsCount > 0) {
-        memcpy(debug_solved_states, foundSolutions[0], numEdges);
-        debug_compare_solved = true;
-    } else {
-        debug_compare_solved = false;
-    }
-#else
     debug_compare_solved = false;
-#endif
-    
-    memset(edgeStates, 0, numEdges); // Reset after backtrack
     dsuInitFromCurrent();
     clearStacks();
     

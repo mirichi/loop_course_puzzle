@@ -93,10 +93,12 @@ class LoopCourseGame {
 
 
 
-    // Undo / Redo
     this.undoBtn.addEventListener('click', () => this.undo());
     this.redoBtn.addEventListener('click', () => this.redo());
-    document.getElementById('btn-check').addEventListener('click', () => this.checkMistakes());
+    const btnCheck = document.getElementById('btn-check');
+    if (btnCheck) {
+      btnCheck.addEventListener('click', () => this.checkMistakes());
+    }
     const autoColorBtn = document.getElementById('btn-autocolor');
     if (autoColorBtn) {
       autoColorBtn.addEventListener('click', () => {
@@ -810,9 +812,10 @@ class LoopCourseGame {
       loadEdgesToWasm();
       
       // Set the solver difficulty to match the current puzzle difficulty
-      // This will automatically disable GF2 for Medium and Easy modes
+      // For loaded/custom puzzles, force "Master" to enable full heuristics (Lookahead, etc.)
+      const targetDiff = (this.difficulty === "Custom") ? "Master" : this.difficulty;
       if (typeof window.wasmModule.ccall === 'function') {
-          window.wasmModule.ccall('set_solver_difficulty', 'void', ['string'], [this.difficulty]);
+          window.wasmModule.ccall('set_solver_difficulty', 'void', ['string'], [targetDiff]);
       }
       
       // Tell WASM to defer GF2 processing until all other rules are exhausted
@@ -942,20 +945,18 @@ class LoopCourseGame {
     this.statusTextEl.textContent = 'パズル作成中... (マルチスレッド実行中 ⚡)';
     this.statusTextEl.classList.add('loading');
 
-    // Terminate existing worker if still running to prevent resource leaks
-    if (this.generatorWorker) {
-      this.generatorWorker.terminate();
-    }
     if (this.workerTimeoutTimer) {
       clearTimeout(this.workerTimeoutTimer);
       this.workerTimeoutTimer = null;
     }
 
     try {
-      // Instantiate background Worker with timestamp to bypass caching
-      this.generatorWorker = new Worker(`js/generator.worker.js?v=${Date.now()}`);
+      // Instantiate background Worker ONCE (Persistent Worker pattern)
+      if (!this.generatorWorker) {
+        this.generatorWorker = new Worker(`js/generator.worker.js?v=20260722_v2`);
+      }
 
-      // Set safety timeout (e.g. 30 seconds) to fallback to main-thread if worker crashes/stalls
+      // Set safety timeout to fallback to main-thread if worker crashes/stalls
       this.workerTimeoutTimer = setTimeout(() => {
         console.warn("Worker puzzle generation timed out. Falling back to main-thread...");
         if (this.generatorWorker) {
@@ -963,7 +964,7 @@ class LoopCourseGame {
           this.generatorWorker = null;
         }
         this.generateOnMainThread();
-      }, 90000); // Increased from 30s to 90s to prevent premature fallback
+      }, 90000);
 
       this.generatorWorker.onmessage = (e) => {
         const data = e.data;
@@ -979,7 +980,7 @@ class LoopCourseGame {
               this.generatorWorker = null;
             }
             this.generateOnMainThread();
-          }, 90000); // Increased from 30s to 90s to prevent premature fallback
+          }, 90000);
 
           if (data.total === -1) {
             this.statusTextEl.textContent = `パズル作成中... (初期盤面を探索中 ⚡: 試行 ${data.checked}回目)`;
@@ -1027,13 +1028,9 @@ class LoopCourseGame {
           this.statusTextEl.innerHTML = '準備完了（<span class="engine-indicator js-engine">JS互換エンジン ☕</span>で非同期生成完了）！すべての数字を満たす1つのループを作ろう。';
         }
         this.statusTextEl.classList.remove('loading');
-
-        // Cleanup Worker resources
-        this.generatorWorker.terminate();
-        this.generatorWorker = null;
       };
 
-      // Trigger background thread puzzle generation
+      // Trigger background thread puzzle generation on the persistent worker
       this.generatorWorker.postMessage({
         rows: this.rows,
         cols: this.cols,
@@ -1922,31 +1919,7 @@ class LoopCourseGame {
   giveHint() {
     if (this.gameCompleted || this.isPaused) return;
 
-    // 1. First, check if there are any incorrectly placed edges (mistakes)
-    const mistakes = [];
-    for (let i = 0; i < this.numEdges; i++) {
-      if (this.edgeStates[i] !== 0 && this.edgeStates[i] !== this.solution[i]) {
-        mistakes.push(i);
-      }
-    }
-
-    // 2. If there are mistakes, highlight all of them in red and return early without changing the board
-    if (mistakes.length > 0) {
-      mistakes.forEach(idx => {
-        const edgeGroup = this.edgeElements ? this.edgeElements[idx] : this.svg.querySelector(`.edge-${idx}`);
-        if (edgeGroup) {
-          edgeGroup.classList.add('error-pulse');
-          setTimeout(() => {
-            edgeGroup.classList.remove('error-pulse');
-          }, 1600);
-        }
-      });
-      this.statusTextEl.textContent = `❌ 間違いが ${mistakes.length} 箇所あります（赤く点滅している線）。まずはこれらを修正してください。`;
-      this.resetHintFailedState();
-      return;
-    }
-
-    // 3. If there are no mistakes, call LoopCourseHintSolver to find a logical hint
+    // Call LoopCourseHintSolver to find a logical hint based on current state
     const hint = LoopCourseHintSolver.getHint(
       this.rows,
       this.cols,
@@ -2116,7 +2089,7 @@ class LoopCourseGame {
         }
       } else {
         this.resetHintFailedState();
-        this.statusTextEl.textContent = '💡 すべての正しい線がすでに引かれています！クリア状態です！';
+        this.statusTextEl.textContent = '💡 すべての辺が入力されていますが、正しいループが完成していません。';
       }
     }
   }
