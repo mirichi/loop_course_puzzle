@@ -224,7 +224,11 @@
                     };
 
                     if (ruleChartInstance) ruleChartInstance.destroy();
-                    const ctxRule = document.getElementById('ruleChart').getContext('2d');
+                    const chartCanvas = document.getElementById('ruleChart');
+                    const chartContainer = chartCanvas.parentElement;
+                    chartContainer.style.height = Math.max(500, ruleNames.length * 20) + 'px';
+
+                    const ctxRule = chartCanvas.getContext('2d');
                     ruleChartInstance = new Chart(ctxRule, {
                         type: 'bar',
                         data: {
@@ -241,7 +245,15 @@
                             maintainAspectRatio: false,
                             indexAxis: 'y',
                             scales: {
-                                x: { beginAtZero: true }
+                                x: { beginAtZero: true },
+                                y: {
+                                    ticks: {
+                                        autoSkip: false,
+                                        font: {
+                                            size: 11
+                                        }
+                                    }
+                                }
                             }
                         }
                     });

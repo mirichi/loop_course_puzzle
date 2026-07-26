@@ -48,6 +48,7 @@ static bool debug_compare_solved = false;
 static const char* dbgSource = "init";
 static int lookaheadConfirmedCount = 0;
 static int lookaheadMaxLimit = 0;
+static int simLookaheadMaxLimit = 0;
 static bool isDoingLookahead = false;
 static int dbgCell = -1;
 static int dbgDot = -1;
@@ -76,6 +77,16 @@ EMSCRIPTEN_KEEPALIVE double get_perf_lookahead() { return perf_lookahead; }
 EMSCRIPTEN_KEEPALIVE void reset_perf() { perf_static = 0; perf_lut = 0; perf_ac3 = 0; perf_gf2 = 0; perf_lookahead = 0; }
 
 EMSCRIPTEN_KEEPALIVE
+void set_lookahead_max_limit(int limit) {
+    lookaheadMaxLimit = limit;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void set_sim_lookahead_max_limit(int limit) {
+    simLookaheadMaxLimit = limit;
+}
+
+EMSCRIPTEN_KEEPALIVE
 void set_solver_difficulty(const char* difficulty) {
     extern int lookaheadMaxLimit;
     extern int solver_max_difficulty;
@@ -83,20 +94,24 @@ void set_solver_difficulty(const char* difficulty) {
         restrictLogicToLocal = true;
         enableGF2 = false;
         lookaheadMaxLimit = 0;
+        simLookaheadMaxLimit = 5;
     } else if (strcmp(difficulty, "Medium") == 0 || strcmp(difficulty, "medium") == 0) {
         restrictLogicToLocal = false;
         enableGF2 = false;
         lookaheadMaxLimit = 0;
+        simLookaheadMaxLimit = 5;
         solver_max_difficulty = DIFF_GLOBAL_3; // Cap at difficulty 7
     } else if (strcmp(difficulty, "Hard") == 0 || strcmp(difficulty, "hard") == 0) {
         restrictLogicToLocal = false;
         enableGF2 = true;
         lookaheadMaxLimit = 0;
+        simLookaheadMaxLimit = 5;
         solver_max_difficulty = DIFF_EXTREME; // Cap at difficulty 8
     } else if (strcmp(difficulty, "Master") == 0 || strcmp(difficulty, "master") == 0) {
         restrictLogicToLocal = false;
         enableGF2 = true;
         lookaheadMaxLimit = 0;
+        simLookaheadMaxLimit = 5;
         solver_max_difficulty = DIFF_GLOBAL_4; // Cap at difficulty 9
     }
 }
@@ -701,6 +716,9 @@ static inline bool deductLightweight(int startEdge, int8_t startState, bool loop
     
     bool contradiction = false;
     while (simQueueHead < simQueueTail) {
+        if (simLookaheadMaxLimit > 0 && simStackTop >= simLookaheadMaxLimit) {
+            break; // Stop lightweight lookahead propagation beyond depth limit
+        }
         int e = simQueue[simQueueHead++];
         
         // 1. Check adjacent cells
@@ -1419,6 +1437,9 @@ static bool batchUpdateGlobalGF2() {
 
 #include "lut_module.h"
 
+static inline bool checkAndApplyDiagonal1s(int curr_r, int curr_c, int dr, int dc);
+static inline bool check121Pattern(int r, int c);
+
 EMSCRIPTEN_KEEPALIVE
 bool applyStaticRules_internal() {
     dsuInitFromCurrent();
@@ -1675,6 +1696,37 @@ bool applyStaticRules_internal() {
                 }
             }
             
+            // Rule 2.1h: 1-2-1 Pattern (General check + Border corner crosses)
+            if (clue == 2) {
+                if (!check121Pattern(r, c)) return false;
+                
+                // Border-specific corner crosses (only when on grid boundary)
+                if (r == 0 && c - 1 >= 0 && c + 1 < cols && clues[c - 1] == 1 && clues[c + 1] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(1, c - 1), -1)) return false;
+                    if (!setEdgeState(getVEdgeIndex(0, c - 1), -1)) return false;
+                    if (!setEdgeState(getHEdgeIndex(1, c + 1), -1)) return false;
+                    if (!setEdgeState(getVEdgeIndex(0, c + 2), -1)) return false;
+                }
+                if (r == rows - 1 && c - 1 >= 0 && c + 1 < cols && clues[r * cols + (c - 1)] == 1 && clues[r * cols + (c + 1)] == 1) {
+                    if (!setEdgeState(getHEdgeIndex(r, c - 1), -1)) return false;
+                    if (!setEdgeState(getVEdgeIndex(r, c - 1), -1)) return false;
+                    if (!setEdgeState(getHEdgeIndex(r, c + 1), -1)) return false;
+                    if (!setEdgeState(getVEdgeIndex(r, c + 2), -1)) return false;
+                }
+                if (c == 0 && r - 1 >= 0 && r + 1 < rows && clues[(r - 1) * cols] == 1 && clues[(r + 1) * cols] == 1) {
+                    if (!setEdgeState(getVEdgeIndex(r - 1, 1), -1)) return false;
+                    if (!setEdgeState(getHEdgeIndex(r - 1, 0), -1)) return false;
+                    if (!setEdgeState(getVEdgeIndex(r + 1, 1), -1)) return false;
+                    if (!setEdgeState(getHEdgeIndex(r + 2, 0), -1)) return false;
+                }
+                if (c == cols - 1 && r - 1 >= 0 && r + 1 < rows && clues[(r - 1) * cols + c] == 1 && clues[(r + 1) * cols + c] == 1) {
+                    if (!setEdgeState(getVEdgeIndex(r - 1, c), -1)) return false;
+                    if (!setEdgeState(getHEdgeIndex(r - 1, c), -1)) return false;
+                    if (!setEdgeState(getVEdgeIndex(r + 1, c), -1)) return false;
+                    if (!setEdgeState(getHEdgeIndex(r + 2, c), -1)) return false;
+                }
+            }
+            
             // Rule 2.2: Generalized Diagonal Chains (3-2...2-3 and 3-2...2-0)
             if (clue == 3) {
                 int drs[] = {-1, -1, 1, 1};
@@ -1731,6 +1783,21 @@ bool applyStaticRules_internal() {
                                 tc += dc;
                             }
                         }
+                    }
+                }
+                
+                // Rule 2.2b: 3-start Diagonal 2-chain with dual 1-clues (Static initial check)
+                int drs2[] = {-1, -1, 1, 1};
+                int dcs2[] = {1, -1, 1, -1};
+                for (int i = 0; i < 4; i++) {
+                    int dr = drs2[i];
+                    int dc = dcs2[i];
+                    int tr = r + dr;
+                    int tc = c + dc;
+                    while (tr >= 0 && tr < rows && tc >= 0 && tc < cols && clues[tr * cols + tc] == 2) {
+                        if (!checkAndApplyDiagonal1s(tr, tc, dr, dc)) return false;
+                        tr += dr;
+                        tc += dc;
                     }
                 }
             }
@@ -2420,6 +2487,86 @@ static inline bool checkAndApplyDiagonal1s(int curr_r, int curr_c, int dr, int d
             if (h2 != numEdges && !setEdgeState(h2, -1)) return false;
         }
     }
+    return true;
+}
+
+static inline bool check121Pattern(int r, int c) {
+    if (getClue(r, c) != 2) return true;
+
+    // 1. Horizontal 1-2-1
+    if (c - 1 >= 0 && c + 1 < cols && getClue(r, c - 1) == 1 && getClue(r, c + 1) == 1) {
+        // Bottom side check
+        int leftB = getVEdgeIndex(r + 1, c);
+        int rightB = getVEdgeIndex(r + 1, c + 1);
+        if (getSafeEdgeState(leftB) == -1 && getSafeEdgeState(rightB) == -1) {
+            int midB = getHEdgeIndex(r + 1, c);
+            int leftT = getHEdgeIndex(r, c - 1);
+            int leftL = getVEdgeIndex(r, c - 1);
+            int rightT = getHEdgeIndex(r, c + 1);
+            int rightR = getVEdgeIndex(r, c + 2);
+
+            if (midB != numEdges && midB != -1 && !setEdgeState(midB, 1)) return false;
+            if (leftT != numEdges && leftT != -1 && !setEdgeState(leftT, -1)) return false;
+            if (leftL != numEdges && leftL != -1 && !setEdgeState(leftL, -1)) return false;
+            if (rightT != numEdges && rightT != -1 && !setEdgeState(rightT, -1)) return false;
+            if (rightR != numEdges && rightR != -1 && !setEdgeState(rightR, -1)) return false;
+        }
+
+        // Top side check
+        int leftT = getVEdgeIndex(r - 1, c);
+        int rightT = getVEdgeIndex(r - 1, c + 1);
+        if (getSafeEdgeState(leftT) == -1 && getSafeEdgeState(rightT) == -1) {
+            int midT = getHEdgeIndex(r, c);
+            int leftB = getHEdgeIndex(r + 1, c - 1);
+            int leftL = getVEdgeIndex(r, c - 1);
+            int rightB = getHEdgeIndex(r + 1, c + 1);
+            int rightR = getVEdgeIndex(r, c + 2);
+
+            if (midT != numEdges && midT != -1 && !setEdgeState(midT, 1)) return false;
+            if (leftB != numEdges && leftB != -1 && !setEdgeState(leftB, -1)) return false;
+            if (leftL != numEdges && leftL != -1 && !setEdgeState(leftL, -1)) return false;
+            if (rightB != numEdges && rightB != -1 && !setEdgeState(rightB, -1)) return false;
+            if (rightR != numEdges && rightR != -1 && !setEdgeState(rightR, -1)) return false;
+        }
+    }
+
+    // 2. Vertical 1-2-1
+    if (r - 1 >= 0 && r + 1 < rows && getClue(r - 1, c) == 1 && getClue(r + 1, c) == 1) {
+        // Left side check
+        int topL = getHEdgeIndex(r, c - 1);
+        int botL = getHEdgeIndex(r + 1, c - 1);
+        if (getSafeEdgeState(topL) == -1 && getSafeEdgeState(botL) == -1) {
+            int midL = getVEdgeIndex(r, c);
+            int topR = getVEdgeIndex(r - 1, c + 1);
+            int topT = getHEdgeIndex(r - 1, c);
+            int botR = getVEdgeIndex(r + 1, c + 1);
+            int botB = getHEdgeIndex(r + 2, c);
+
+            if (midL != numEdges && midL != -1 && !setEdgeState(midL, 1)) return false;
+            if (topR != numEdges && topR != -1 && !setEdgeState(topR, -1)) return false;
+            if (topT != numEdges && topT != -1 && !setEdgeState(topT, -1)) return false;
+            if (botR != numEdges && botR != -1 && !setEdgeState(botR, -1)) return false;
+            if (botB != numEdges && botB != -1 && !setEdgeState(botB, -1)) return false;
+        }
+
+        // Right side check
+        int topR = getHEdgeIndex(r, c + 1);
+        int botR = getHEdgeIndex(r + 1, c + 1);
+        if (getSafeEdgeState(topR) == -1 && getSafeEdgeState(botR) == -1) {
+            int midR = getVEdgeIndex(r, c + 1);
+            int topL = getVEdgeIndex(r - 1, c);
+            int topT = getHEdgeIndex(r - 1, c);
+            int botL = getVEdgeIndex(r + 1, c);
+            int botB = getHEdgeIndex(r + 2, c);
+
+            if (midR != numEdges && midR != -1 && !setEdgeState(midR, 1)) return false;
+            if (topL != numEdges && topL != -1 && !setEdgeState(topL, -1)) return false;
+            if (topT != numEdges && topT != -1 && !setEdgeState(topT, -1)) return false;
+            if (botL != numEdges && botL != -1 && !setEdgeState(botL, -1)) return false;
+            if (botB != numEdges && botB != -1 && !setEdgeState(botB, -1)) return false;
+        }
+    }
+
     return true;
 }
 
@@ -3400,10 +3547,9 @@ RECORD_AC3_TIME(115);
                         }
                     } else if (lines == 0 && undecidedCount == 2) {
                         // Rule A: Generalized Corner Heuristic
-                        if (ac3_current_difficulty_limit >= DIFF_EASY) {
+                        if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
                             int prev_rule_id = ac3_current_rule_id;
-RECORD_AC3_TIME(126);
-                            ac3_current_rule_id = 111;
+                            RECORD_AC3_TIME(126);
                             
                             int e1 = undecided[0];
                             int e2 = undecided[1];
@@ -3628,7 +3774,7 @@ RECORD_AC3_TIME(126);
         }
 
         // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
-        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
+        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
             RECORD_AC3_TIME(142);
             if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
             
@@ -3666,7 +3812,7 @@ RECORD_AC3_TIME(126);
         }
         
         bool cycleChanged = false;
-        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
+        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
             RECORD_AC3_TIME(141);
             for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
@@ -4370,6 +4516,7 @@ int solve_puzzle_wasm(bool findSingle, int maxSteps) {
     restrictLogicToLocal = false;
     enableGF2 = true;
     lookaheadMaxLimit = 100;
+    simLookaheadMaxLimit = 0; // Unlimited for puzzle loading / verification
     solver_max_difficulty = DIFF_LOOKAHEAD;
 
     dsuInitFromCurrent();
@@ -5407,6 +5554,7 @@ int analyze_puzzle(const char* difficulty) {
     enable_deduction_logging = true;
     
     lookaheadMaxLimit = 100;
+    simLookaheadMaxLimit = 0; // Unlimited for Analysis mode
     
     debug_compare_solved = false;
     dsuInitFromCurrent();

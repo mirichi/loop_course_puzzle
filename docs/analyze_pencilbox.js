@@ -49,16 +49,12 @@ async function main() {
     // Wrap C functions
     const init_grid = Module.cwrap('init_grid', null, ['number', 'number']);
     const get_clues_ptr = Module.cwrap('get_clues_ptr', 'number', []);
-    const set_advanced_ac3 = Module.cwrap('set_advanced_ac3', null, ['number']);
-    const analyze_puzzle = Module.cwrap('analyze_puzzle', null, []);
-
+    const analyze_puzzle = Module.cwrap('analyze_puzzle', 'number', ['string']);
+    const get_ac3_rule_name = Module.cwrap('get_ac3_rule_name', 'string', ['number']);
     const get_deduction_log_count = Module.cwrap('get_deduction_log_count', 'number', []);
     const get_deduction_logs_ptr = Module.cwrap('get_deduction_logs_ptr', 'number', []);
-    const get_ac3_rule_name = Module.cwrap('get_ac3_rule_name', 'string', ['number']);
-
     // Initialize WASM state
     init_grid(rows, cols);
-    set_advanced_ac3(1); // Enable advanced techniques
 
     // Write clues into WASM memory
     const cluesPtr = get_clues_ptr();
@@ -66,9 +62,9 @@ async function main() {
         Module.HEAP8[cluesPtr + i] = parsedClues[i];
     }
 
-    console.log(`\\n--- Running Analyzer on ${fileName} ---`);
+    console.log(`\n--- Running Analyzer on ${fileName} ---`);
     const start_time = performance.now();
-    const result = analyze_puzzle();
+    const result = analyze_puzzle("Master");
     const end_time = performance.now();
     console.log(`[Analyzer] analyze_puzzle returned: ${result}`);
 
