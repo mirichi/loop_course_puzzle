@@ -3773,14 +3773,14 @@ RECORD_AC3_TIME(115);
             continue;
         }
 
-        // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
-        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
-            RECORD_AC3_TIME(142);
-            if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
+        // // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
+        // if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
+        //     RECORD_AC3_TIME(142);
+        //     if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
             
-            RECORD_AC3_TIME(144);
-            if (!applyInsideOutsideColoring()) AC3_RETURN_FALSE;
-        }
+        //     RECORD_AC3_TIME(144);
+        //     if (!applyInsideOutsideColoring()) AC3_RETURN_FALSE;
+        // }
         
         if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
             RECORD_AC3_TIME(143);
@@ -3812,7 +3812,7 @@ RECORD_AC3_TIME(115);
         }
         
         bool cycleChanged = false;
-        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
+        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
             RECORD_AC3_TIME(141);
             for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
