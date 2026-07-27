@@ -76,6 +76,40 @@ EMSCRIPTEN_KEEPALIVE double get_perf_gf2() { return perf_gf2; }
 EMSCRIPTEN_KEEPALIVE double get_perf_lookahead() { return perf_lookahead; }
 EMSCRIPTEN_KEEPALIVE void reset_perf() { perf_static = 0; perf_lut = 0; perf_ac3 = 0; perf_gf2 = 0; perf_lookahead = 0; }
 
+static bool rule_disabled[256] = {
+    [142] = true, // Jordan Curve (disabled by default, enabled only via explicit lab toggle)
+    [144] = true  // Inside/Outside Coloring (disabled by default, enabled only via explicit lab toggle)
+};
+
+EMSCRIPTEN_KEEPALIVE
+void set_rule_enabled(int rule_id, bool enabled) {
+    if (rule_id >= 0 && rule_id < 256) {
+        rule_disabled[rule_id] = !enabled;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void set_all_rules_enabled(bool enabled) {
+    for (int i = 0; i < 256; i++) {
+        rule_disabled[i] = !enabled;
+    }
+    if (enabled) {
+        // Rules 142 & 144 remain disabled unless explicitly set via set_rule_enabled
+        rule_disabled[142] = true;
+        rule_disabled[144] = true;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+bool is_rule_enabled(int rule_id) {
+    if (rule_id >= 0 && rule_id < 256) {
+        return !rule_disabled[rule_id];
+    }
+    return true;
+}
+
+#define IS_RULE_ENABLED(id) ((id) < 0 || (id) >= 256 || !rule_disabled[(id)])
+
 EMSCRIPTEN_KEEPALIVE
 void set_lookahead_max_limit(int limit) {
     lookaheadMaxLimit = limit;
@@ -120,7 +154,7 @@ void set_solver_difficulty(const char* difficulty) {
 extern int ac3_current_rule_id;
 extern int ac3_rule_hit_counts[256];
 #define RECORD_AC3_HIT() do { \
-    if (ac3_current_rule_id >= 0 && ac3_current_rule_id < 256) ac3_rule_hit_counts[ac3_current_rule_id]++; \
+    if (!isDoingLookahead && ac3_current_rule_id >= 0 && ac3_current_rule_id < 256) ac3_rule_hit_counts[ac3_current_rule_id]++; \
 } while(0)
 
 // Graph adjacency list arrays for loop connection tracing (avoids allocations)
@@ -375,6 +409,7 @@ EMSCRIPTEN_KEEPALIVE const char* get_ac3_rule_name(int idx) {
         case 136: return "Hard (Clue 2 Early SLE)";
         case 137: return "Hard (2 and 3 Diagonal)";
         case 138: return "Hard (Dot Border Theorem)";
+        case 139: return "Hard (Diag 2 Opposite External Lines)";
         case 140: return "Hard (Diag 2-3 Outer X/Line)";
         case 141: return "Global (Early Closed Loop)";
         case 142: return "Global (Jordan Curve)";
@@ -541,6 +576,9 @@ static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
     if (edgeIdx < 0 || edgeIdx > numEdges) {
         printf("[C ERROR] Invalid edge index %d (max %d) at line %d\n", edgeIdx, numEdges, line_no);
         return false;
+    }
+    if (ac3_current_rule_id > 0 && ac3_current_rule_id < 256 && rule_disabled[ac3_current_rule_id]) {
+        return true; // Rule is disabled by user, skip applying change
     }
     if (edgeStates[edgeIdx] == state) return true; // Already set to this state
     if (edgeStates[edgeIdx] != 0) {
@@ -3368,6 +3406,40 @@ RECORD_AC3_TIME(115);
                                     if (!setEdgeState(getVEdgeIndex(r, c + 1), 1)) AC3_RETURN_FALSE;
                                 }
                             }
+
+                            RECORD_AC3_TIME(139);
+                            // Rule: Diagonal 2 with Opposite External Lines
+                            // Diagonal pair 1: TL (r, c) & BR (r+1, c+1)
+                            int outTL_H = (c > 0) ? getHEdgeIndex(r, c - 1) : -1;
+                            int outTL_V = (r > 0) ? getVEdgeIndex(r - 1, c) : -1;
+                            int outBR_H2 = (c < cols - 1) ? getHEdgeIndex(r + 1, c + 1) : -1;
+                            int outBR_V2 = (r < rows - 1) ? getVEdgeIndex(r + 1, c + 1) : -1;
+
+                            bool tlHasLine = (outTL_H != -1 && edgeStates[outTL_H] == 1) || (outTL_V != -1 && edgeStates[outTL_V] == 1);
+                            bool brHasLine = (outBR_H2 != -1 && edgeStates[outBR_H2] == 1) || (outBR_V2 != -1 && edgeStates[outBR_V2] == 1);
+
+                            if (tlHasLine && brHasLine) {
+                                if (outTL_H != -1 && edgeStates[outTL_H] == 0) { if (!setEdgeState(outTL_H, -1)) AC3_RETURN_FALSE; }
+                                if (outTL_V != -1 && edgeStates[outTL_V] == 0) { if (!setEdgeState(outTL_V, -1)) AC3_RETURN_FALSE; }
+                                if (outBR_H2 != -1 && edgeStates[outBR_H2] == 0) { if (!setEdgeState(outBR_H2, -1)) AC3_RETURN_FALSE; }
+                                if (outBR_V2 != -1 && edgeStates[outBR_V2] == 0) { if (!setEdgeState(outBR_V2, -1)) AC3_RETURN_FALSE; }
+                            }
+
+                            // Diagonal pair 2: TR (r, c+1) & BL (r+1, c)
+                            int outTR_H = (c < cols - 1) ? getHEdgeIndex(r, c + 1) : -1;
+                            int outTR_V = (r > 0) ? getVEdgeIndex(r - 1, c + 1) : -1;
+                            int outBL_H = (c > 0) ? getHEdgeIndex(r + 1, c - 1) : -1;
+                            int outBL_V = (r < rows - 1) ? getVEdgeIndex(r + 1, c) : -1;
+
+                            bool trHasLine = (outTR_H != -1 && edgeStates[outTR_H] == 1) || (outTR_V != -1 && edgeStates[outTR_V] == 1);
+                            bool blHasLine = (outBL_H != -1 && edgeStates[outBL_H] == 1) || (outBL_V != -1 && edgeStates[outBL_V] == 1);
+
+                            if (trHasLine && blHasLine) {
+                                if (outTR_H != -1 && edgeStates[outTR_H] == 0) { if (!setEdgeState(outTR_H, -1)) AC3_RETURN_FALSE; }
+                                if (outTR_V != -1 && edgeStates[outTR_V] == 0) { if (!setEdgeState(outTR_V, -1)) AC3_RETURN_FALSE; }
+                                if (outBL_H != -1 && edgeStates[outBL_H] == 0) { if (!setEdgeState(outBL_H, -1)) AC3_RETURN_FALSE; }
+                                if (outBL_V != -1 && edgeStates[outBL_V] == 0) { if (!setEdgeState(outBL_V, -1)) AC3_RETURN_FALSE; }
+                            }
                         }
                     }
                 }
@@ -3772,15 +3844,19 @@ RECORD_AC3_TIME(115);
             }
             continue;
         }
-
-        // // Queues are empty. Check Jordan Curve Parity, Corner 2 rules, and 2-cell corner parity!
-        // if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
-        //     RECORD_AC3_TIME(142);
-        //     if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
             
-        //     RECORD_AC3_TIME(144);
-        //     if (!applyInsideOutsideColoring()) AC3_RETURN_FALSE;
-        // }
+        // Check Jordan Curve Parity (142) and Inside/Outside Coloring (144)
+        if (ac3_current_difficulty_limit >= DIFF_GLOBAL_1) {
+            if (IS_RULE_ENABLED(142)) {
+                RECORD_AC3_TIME(142);
+                if (!deductJordanCurveParity()) AC3_RETURN_FALSE;
+            }
+            
+            if (IS_RULE_ENABLED(144)) {
+                RECORD_AC3_TIME(144);
+                if (!applyInsideOutsideColoring()) AC3_RETURN_FALSE;
+            }
+        }
         
         if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
             RECORD_AC3_TIME(143);
@@ -4321,7 +4397,7 @@ int check_human_solvability() {
         bool lookaheadFound = false;
         double t_lookahead_start = emscripten_get_now();
         
-        if (lookaheadMaxLimit > 0) {        
+        if (lookaheadMaxLimit > 0 && IS_RULE_ENABLED(200)) {        
             for (int i = 0; i < numEdges; i++) {
             if (edgeStates[i] == 0) {
                 if (!isEdgeConstrained(i)) continue; // Prune unconstrained edges
@@ -5553,6 +5629,8 @@ int analyze_puzzle(const char* difficulty) {
     deduction_log_count = 0;
     enable_deduction_logging = true;
     
+    ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
+    solver_max_difficulty = DIFF_LOOKAHEAD;
     lookaheadMaxLimit = 100;
     simLookaheadMaxLimit = 0; // Unlimited for Analysis mode
     
@@ -5564,7 +5642,5 @@ int analyze_puzzle(const char* difficulty) {
     
     debug_compare_solved = false;
     enable_deduction_logging = false;
-    ac3_current_difficulty_limit = DIFF_LOOKAHEAD;
-    solver_max_difficulty = DIFF_LOOKAHEAD;
     return result;
 }

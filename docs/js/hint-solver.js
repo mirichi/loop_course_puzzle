@@ -2451,6 +2451,102 @@ class LoopCourseHintSolver {
     return hints;
   }
 
+  // --- RULE: 2の対角外線定石 (Diagonal 2 with Opposite External Lines) ---
+  checkDiagonal2OppositeExternalLines() {
+    const hints = [];
+
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.clues[r][c] !== 2) continue;
+
+        // Diagonal pair 1: Top-Left (r, c) and Bottom-Right (r+1, c+1)
+        const tlH = c > 0 ? this.getHEdgeIndex(r, c - 1) : -1;
+        const tlV = r > 0 ? this.getVEdgeIndex(r - 1, c) : -1;
+        const brH = c < this.cols - 1 ? this.getHEdgeIndex(r + 1, c + 1) : -1;
+        const brV = r < this.rows - 1 ? this.getVEdgeIndex(r + 1, c + 1) : -1;
+
+        const tlHasLine = (tlH !== -1 && this.edgeStates[tlH] === 1) || (tlV !== -1 && this.edgeStates[tlV] === 1);
+        const brHasLine = (brH !== -1 && this.edgeStates[brH] === 1) || (brV !== -1 && this.edgeStates[brV] === 1);
+
+        if (tlHasLine && brHasLine) {
+          // TL's undecided outer edge must be CROSS
+          if (tlH !== -1 && this.edgeStates[tlH] === 0) {
+            hints.push({
+              edgeIdx: tlH,
+              state: -1,
+              reason: `2の対角の頂点（左上と右下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+          if (tlV !== -1 && this.edgeStates[tlV] === 0) {
+            hints.push({
+              edgeIdx: tlV,
+              state: -1,
+              reason: `2の対角の頂点（左上と右下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+          // BR's undecided outer edge must be CROSS
+          if (brH !== -1 && this.edgeStates[brH] === 0) {
+            hints.push({
+              edgeIdx: brH,
+              state: -1,
+              reason: `2の対角の頂点（左上と右下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+          if (brV !== -1 && this.edgeStates[brV] === 0) {
+            hints.push({
+              edgeIdx: brV,
+              state: -1,
+              reason: `2の対角の頂点（左上と右下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+        }
+
+        // Diagonal pair 2: Top-Right (r, c+1) and Bottom-Left (r+1, c)
+        const trH = c < this.cols - 1 ? this.getHEdgeIndex(r, c + 1) : -1;
+        const trV = r > 0 ? this.getVEdgeIndex(r - 1, c + 1) : -1;
+        const blH = c > 0 ? this.getHEdgeIndex(r + 1, c - 1) : -1;
+        const blV = r < this.rows - 1 ? this.getVEdgeIndex(r + 1, c) : -1;
+
+        const trHasLine = (trH !== -1 && this.edgeStates[trH] === 1) || (trV !== -1 && this.edgeStates[trV] === 1);
+        const blHasLine = (blH !== -1 && this.edgeStates[blH] === 1) || (blV !== -1 && this.edgeStates[blV] === 1);
+
+        if (trHasLine && blHasLine) {
+          // TR's undecided outer edge must be CROSS
+          if (trH !== -1 && this.edgeStates[trH] === 0) {
+            hints.push({
+              edgeIdx: trH,
+              state: -1,
+              reason: `2の対角の頂点（右上と左下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+          if (trV !== -1 && this.edgeStates[trV] === 0) {
+            hints.push({
+              edgeIdx: trV,
+              state: -1,
+              reason: `2の対角の頂点（右上と左下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+          // BL's undecided outer edge must be CROSS
+          if (blH !== -1 && this.edgeStates[blH] === 0) {
+            hints.push({
+              edgeIdx: blH,
+              state: -1,
+              reason: `2の対角の頂点（右上と左下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+          if (blV !== -1 && this.edgeStates[blV] === 0) {
+            hints.push({
+              edgeIdx: blV,
+              state: -1,
+              reason: `2の対角の頂点（右上と左下）の両方から外へ線が流入しているため、各頂点のもう片方の外側の辺は×印で確定します。`
+            });
+          }
+        }
+      }
+    }
+    return hints;
+  }
+
   // --- Main API Entrypoint ---
   static getHint(rows, cols, clues, edgeStates, solution, allowMulti = false) {
     const solver = new LoopCourseHintSolver(rows, cols, clues, edgeStates, solution);
@@ -2557,7 +2653,8 @@ class LoopCourseHintSolver {
       () => solver.checkCellConstraints(),
       () => solver.checkDotConstraints(),
       () => solver.checkPrematureLoops(),
-      () => solver.checkAdjacent3sWith2()
+      () => solver.checkAdjacent3sWith2(),
+      () => solver.checkDiagonal2OppositeExternalLines()
     ];
 
     for (const rule of crossRules) {
