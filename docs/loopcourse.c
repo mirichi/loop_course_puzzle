@@ -1147,6 +1147,46 @@ static inline int getSafeEdgeState(int idx) {
     return idx == -1 ? -1 : edgeStates[idx];
 }
 
+// --- NEW 2-3 OPPOSITE EDGE LOGIC ---
+static inline bool check23OppositeEdgeLogic(int r, int c) {
+    int clue = clues[r * cols + c];
+    if (clue != 2) return true;
+
+    // Right adjacent 3
+    if (c + 1 < cols && clues[r * cols + (c + 1)] == 3) {
+        if (getSafeEdgeState(getVEdgeIndex(r, c)) == -1) {
+            if (!setEdgeState(getVEdgeIndex(r, c + 2), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r - 1, c + 1), -1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r + 1, c + 1), -1)) return false;
+        }
+    }
+    // Left adjacent 3
+    if (c - 1 >= 0 && clues[r * cols + (c - 1)] == 3) {
+        if (getSafeEdgeState(getVEdgeIndex(r, c + 1)) == -1) {
+            if (!setEdgeState(getVEdgeIndex(r, c - 1), 1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r - 1, c), -1)) return false;
+            if (!setEdgeState(getVEdgeIndex(r + 1, c), -1)) return false;
+        }
+    }
+    // Bottom adjacent 3
+    if (r + 1 < rows && clues[(r + 1) * cols + c] == 3) {
+        if (getSafeEdgeState(getHEdgeIndex(r, c)) == -1) {
+            if (!setEdgeState(getHEdgeIndex(r + 2, c), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r + 1, c - 1), -1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r + 1, c + 1), -1)) return false;
+        }
+    }
+    // Top adjacent 3
+    if (r - 1 >= 0 && clues[(r - 1) * cols + c] == 3) {
+        if (getSafeEdgeState(getHEdgeIndex(r + 1, c)) == -1) {
+            if (!setEdgeState(getHEdgeIndex(r - 1, c), 1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r, c - 1), -1)) return false;
+            if (!setEdgeState(getHEdgeIndex(r, c + 1), -1)) return false;
+        }
+    }
+    return true;
+}
+
 // --- NEW 2-3 CORNER LOGIC ---
 static inline bool check23CornerLogic(int r, int c) {
     int clue = clues[r * cols + c];
@@ -3298,6 +3338,7 @@ static inline bool deductIncremental_internal() {
                 if (clue != -1) {
                     if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
                         RECORD_AC3_TIME(121);
+                        if (!check23OppositeEdgeLogic(r, c)) AC3_RETURN_FALSE;
                         if (!check23CornerLogic(r, c)) AC3_RETURN_FALSE;
                         if (!check22CornerLogic(r, c)) AC3_RETURN_FALSE;
                     }
