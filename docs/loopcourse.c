@@ -488,12 +488,27 @@ typedef struct {
     int edgeIdx;
     int ruleId;
     int depth; // lookahead depth (0 for base logic)
+    int state; // 1 (line) or -1 (cross)
 } DeductionLog;
 
 DeductionLog deduction_logs[MAX_EDGES * 2];
 int deduction_log_count = 0;
 bool enable_deduction_logging = false;
 int current_lookahead_depth = 0;
+
+int ac3_breakpoint_rule_id = -1;
+bool ac3_breakpoint_triggered = false;
+
+EMSCRIPTEN_KEEPALIVE
+void set_breakpoint_rule_id(int rule_id) {
+    ac3_breakpoint_rule_id = rule_id;
+    ac3_breakpoint_triggered = false;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int is_breakpoint_triggered() {
+    return ac3_breakpoint_triggered ? 1 : 0;
+}
 
 EMSCRIPTEN_KEEPALIVE
 int get_first_deduced_edge() {
@@ -603,7 +618,12 @@ static inline bool setEdgeState_real(int edgeIdx, int8_t state, int line_no) {
         deduction_logs[deduction_log_count].edgeIdx = edgeIdx;
         deduction_logs[deduction_log_count].ruleId = ac3_current_rule_id;
         deduction_logs[deduction_log_count].depth = 0;
+        deduction_logs[deduction_log_count].state = state;
         deduction_log_count++;
+
+        if (ac3_breakpoint_rule_id != -1 && ac3_current_rule_id == ac3_breakpoint_rule_id) {
+            ac3_breakpoint_triggered = true;
+        }
     }
     
     if (deduction_history_count < MAX_EDGES * 2) {
@@ -2187,6 +2207,16 @@ static bool applyVirtualPathLogic() {
     int forbiddenE2[400];
     int forbiddenCount = 0;
     
+    // forbiddenQuad: corner-blocked virtual path (clue 2, lines==0, corner external edges all ×)
+    // Stores the 4 cell edges and the diagonal pair components
+    int fqCompA[200];
+    int fqCompB[200];
+    int fqEdgeT[200];
+    int fqEdgeB[200];
+    int fqEdgeL[200];
+    int fqEdgeR[200];
+    int fqCount = 0;
+    
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
             int clue = clues[r * cols + c];
@@ -2209,6 +2239,210 @@ static bool applyVirtualPathLogic() {
                 else undecided[undecidedCount++] = edges[i];
             }
             
+            if (clue == 2 && lines == 0) {
+                int dotTL = r * (cols + 1) + c;
+                int dotTR = r * (cols + 1) + (c + 1);
+                int dotBL = (r + 1) * (cols + 1) + c;
+                int dotBR = (r + 1) * (cols + 1) + (c + 1);
+
+                // Compute degrees for the 4 dots of cell (r, c)
+                int degTL = 0, degTR = 0, degBL = 0, degBR = 0;
+                int rH_start = r * (cols + 1);
+                for (int e = 0; e < numEdges; e++) {
+                    if (edgeStates[e] == 1) {
+                        int u, v;
+                        if (e < numH) { u = (e / cols) * (cols + 1) + (e % cols); v = u + 1; }
+                        else { int vIdx = e - numH; u = (vIdx / (cols + 1)) * (cols + 1) + (vIdx % (cols + 1)); v = u + (cols + 1); }
+                        if (u == dotTL || v == dotTL) degTL++;
+                        if (u == dotTR || v == dotTR) degTR++;
+                        if (u == dotBL || v == dotBL) degBL++;
+                        if (u == dotBR || v == dotBR) degBR++;
+                    }
+                }
+
+                // Diagonal Pair 1: TR & BL
+                if (degTR == 1 && degBL == 1 && dsuFind(dotTR) == dsuFind(dotBL)) {
+                    int eT = edges[0], eB = edges[1], eL = edges[2], eR = edges[3];
+                    if (edgeStates[eL] == -1 || edgeStates[eB] == -1 || edgeStates[eR] == -1) {
+                        int extBL_V = (r < rows - 1) ? getVEdgeIndex(r + 1, c) : -1;
+                        if (extBL_V != -1 && edgeStates[extBL_V] == 0) {
+                            if (!setEdgeState(extBL_V, -1)) return false;
+                            changed = true;
+                        }
+                        int extBL_H = (c > 0) ? getHEdgeIndex(r + 1, c - 1) : -1;
+                        if (extBL_H != -1 && edgeStates[extBL_H] == 0) {
+                            if (!setEdgeState(extBL_H, -1)) return false;
+                            changed = true;
+                        }
+                    }
+                    if (edgeStates[eL] == -1 || edgeStates[eT] == -1 || edgeStates[eR] == -1) {
+                        int extTR_V = (r > 0) ? getVEdgeIndex(r - 1, c + 1) : -1;
+                        if (extTR_V != -1 && edgeStates[extTR_V] == 0) {
+                            if (!setEdgeState(extTR_V, -1)) return false;
+                            changed = true;
+                        }
+                        int extTR_H = (c < cols - 1) ? getHEdgeIndex(r, c + 1) : -1;
+                        if (extTR_H != -1 && edgeStates[extTR_H] == 0) {
+                            if (!setEdgeState(extTR_H, -1)) return false;
+                            changed = true;
+                        }
+                    }
+                }
+
+                // Diagonal Pair 2: TL & BR
+                if (degTL == 1 && degBR == 1 && dsuFind(dotTL) == dsuFind(dotBR)) {
+                    int eT = edges[0], eB = edges[1], eL = edges[2], eR = edges[3];
+                    if (edgeStates[eL] == -1 || edgeStates[eT] == -1 || edgeStates[eB] == -1) {
+                        int extTL_V = (r > 0) ? getVEdgeIndex(r - 1, c) : -1;
+                        if (extTL_V != -1 && edgeStates[extTL_V] == 0) {
+                            if (!setEdgeState(extTL_V, -1)) return false;
+                            changed = true;
+                        }
+                        int extTL_H = (c > 0) ? getHEdgeIndex(r, c - 1) : -1;
+                        if (extTL_H != -1 && edgeStates[extTL_H] == 0) {
+                            if (!setEdgeState(extTL_H, -1)) return false;
+                            changed = true;
+                        }
+                    }
+                    if (edgeStates[eR] == -1 || edgeStates[eB] == -1 || edgeStates[eT] == -1) {
+                        int extBR_V = (r < rows - 1) ? getVEdgeIndex(r + 1, c + 1) : -1;
+                        if (extBR_V != -1 && edgeStates[extBR_V] == 0) {
+                            if (!setEdgeState(extBR_V, -1)) return false;
+                            changed = true;
+                        }
+                        int extBR_H = (c < cols - 1) ? getHEdgeIndex(r + 1, c + 1) : -1;
+                        if (extBR_H != -1 && edgeStates[extBR_H] == 0) {
+                            if (!setEdgeState(extBR_H, -1)) return false;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            // === Corner-blocked virtual path for clue 2, lines == 0 ===
+            // If both external edges at a corner are × (or boundary),
+            // the cell forces a virtual path between the opposite diagonal corners.
+            if (clue == 2 && lines == 0 && fqCount < 200) {
+                int dotTL_vp = r * (cols + 1) + c;
+                int dotTR_vp = r * (cols + 1) + (c + 1);
+                int dotBL_vp = (r + 1) * (cols + 1) + c;
+                int dotBR_vp = (r + 1) * (cols + 1) + (c + 1);
+                int eT_vp = edges[0], eB_vp = edges[1], eL_vp = edges[2], eR_vp = edges[3];
+                
+                // Check if any cell edge is already × — if so, skip (not all 4 undecided)
+                bool allUndecided = (edgeStates[eT_vp] == 0 && edgeStates[eB_vp] == 0 &&
+                                     edgeStates[eL_vp] == 0 && edgeStates[eR_vp] == 0);
+                // Also allow partially decided: even with some edges ×, the virtual path may still hold
+                // But to be safe, require that the two edges forming each pattern are both undecided
+                
+                // For each corner, check if external edges are all blocked (× or boundary)
+                // Corner BL: external edges = V(r+1,c) down, H(r+1,c-1) left
+                // Corner TR: external edges = V(r-1,c+1) up, H(r,c+1) right  
+                // Both create TL↔BR virtual path
+                bool tlbrChecked = false;
+                
+                // BL corner check
+                {
+                    int ext1 = getVEdgeIndex(r + 1, c);     // down from BL
+                    int ext2 = getHEdgeIndex(r + 1, c - 1); // left from BL
+                    bool ext1_blocked = (ext1 == numEdges || edgeStates[ext1] == -1);
+                    bool ext2_blocked = (ext2 == numEdges || edgeStates[ext2] == -1);
+                    if (ext1_blocked && ext2_blocked) {
+                        // BL corner blocked → forces Left+Bottom or Top+Right → TL↔BR virtual path
+                        // Both pattern edges must be undecided for virtual path to exist
+                        if (edgeStates[eL_vp] == 0 && edgeStates[eB_vp] == 0 &&
+                            edgeStates[eT_vp] == 0 && edgeStates[eR_vp] == 0) {
+                            int compTL = dsuFind(dotTL_vp);
+                            int compBR = dsuFind(dotBR_vp);
+                            if (compTL != compBR) {
+                                fqCompA[fqCount] = compTL;
+                                fqCompB[fqCount] = compBR;
+                                fqEdgeT[fqCount] = eT_vp;
+                                fqEdgeB[fqCount] = eB_vp;
+                                fqEdgeL[fqCount] = eL_vp;
+                                fqEdgeR[fqCount] = eR_vp;
+                                fqCount++;
+                                tlbrChecked = true;
+                            }
+                        }
+                    }
+                }
+                
+                // TR corner check (same TL↔BR pair, skip if already registered)
+                if (!tlbrChecked) {
+                    int ext1 = getVEdgeIndex(r - 1, c + 1); // up from TR
+                    int ext2 = getHEdgeIndex(r, c + 1);     // right from TR
+                    bool ext1_blocked = (ext1 == numEdges || edgeStates[ext1] == -1);
+                    bool ext2_blocked = (ext2 == numEdges || edgeStates[ext2] == -1);
+                    if (ext1_blocked && ext2_blocked) {
+                        if (edgeStates[eL_vp] == 0 && edgeStates[eB_vp] == 0 &&
+                            edgeStates[eT_vp] == 0 && edgeStates[eR_vp] == 0) {
+                            int compTL = dsuFind(dotTL_vp);
+                            int compBR = dsuFind(dotBR_vp);
+                            if (compTL != compBR) {
+                                fqCompA[fqCount] = compTL;
+                                fqCompB[fqCount] = compBR;
+                                fqEdgeT[fqCount] = eT_vp;
+                                fqEdgeB[fqCount] = eB_vp;
+                                fqEdgeL[fqCount] = eL_vp;
+                                fqEdgeR[fqCount] = eR_vp;
+                                fqCount++;
+                            }
+                        }
+                    }
+                }
+                
+                // TL corner check → TR↔BL virtual path
+                bool trblChecked = false;
+                {
+                    int ext1 = getVEdgeIndex(r - 1, c);     // up from TL
+                    int ext2 = getHEdgeIndex(r, c - 1);     // left from TL
+                    bool ext1_blocked = (ext1 == numEdges || edgeStates[ext1] == -1);
+                    bool ext2_blocked = (ext2 == numEdges || edgeStates[ext2] == -1);
+                    if (ext1_blocked && ext2_blocked) {
+                        if (edgeStates[eL_vp] == 0 && edgeStates[eB_vp] == 0 &&
+                            edgeStates[eT_vp] == 0 && edgeStates[eR_vp] == 0) {
+                            int compTR = dsuFind(dotTR_vp);
+                            int compBL = dsuFind(dotBL_vp);
+                            if (compTR != compBL) {
+                                fqCompA[fqCount] = compTR;
+                                fqCompB[fqCount] = compBL;
+                                fqEdgeT[fqCount] = eT_vp;
+                                fqEdgeB[fqCount] = eB_vp;
+                                fqEdgeL[fqCount] = eL_vp;
+                                fqEdgeR[fqCount] = eR_vp;
+                                fqCount++;
+                                trblChecked = true;
+                            }
+                        }
+                    }
+                }
+                
+                // BR corner check (same TR↔BL pair, skip if already registered)
+                if (!trblChecked) {
+                    int ext1 = getVEdgeIndex(r + 1, c + 1); // down from BR
+                    int ext2 = getHEdgeIndex(r + 1, c + 1); // right from BR
+                    bool ext1_blocked = (ext1 == numEdges || edgeStates[ext1] == -1);
+                    bool ext2_blocked = (ext2 == numEdges || edgeStates[ext2] == -1);
+                    if (ext1_blocked && ext2_blocked) {
+                        if (edgeStates[eL_vp] == 0 && edgeStates[eB_vp] == 0 &&
+                            edgeStates[eT_vp] == 0 && edgeStates[eR_vp] == 0) {
+                            int compTR = dsuFind(dotTR_vp);
+                            int compBL = dsuFind(dotBL_vp);
+                            if (compTR != compBL) {
+                                fqCompA[fqCount] = compTR;
+                                fqCompB[fqCount] = compBL;
+                                fqEdgeT[fqCount] = eT_vp;
+                                fqEdgeB[fqCount] = eB_vp;
+                                fqEdgeL[fqCount] = eL_vp;
+                                fqEdgeR[fqCount] = eR_vp;
+                                fqCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
             if (lines + 1 == clue && undecidedCount == 2) {
                 int e1 = undecided[0];
                 int e2 = undecided[1];
@@ -2284,6 +2518,62 @@ static bool applyVirtualPathLogic() {
                         edgeStates[k] = 0;
                         edgeStates[forbiddenE1[i]] = 0;
                         edgeStates[forbiddenE2[i]] = 0;
+                        
+                        if (!solved1 && !solved2) {
+                            if (!setEdgeState(k, -1)) return false;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // === Second pass for forbiddenQuad (corner-blocked virtual paths) ===
+    if (fqCount > 0) {
+        for (int k = 0; k < numEdges; k++) {
+            if (edgeStates[k] == 0) {
+                int uk, vk;
+                if (k < numH) {
+                    uk = (k / cols) * (cols + 1) + (k % cols); vk = uk + 1;
+                } else {
+                    int vIdx = k - numH;
+                    uk = (vIdx / (cols + 1)) * (cols + 1) + (vIdx % (cols + 1)); vk = uk + (cols + 1);
+                }
+                int compU = dsuFind(uk);
+                int compV = dsuFind(vk);
+                
+                for (int i = 0; i < fqCount; i++) {
+                    // Skip if k is one of the cell's own edges
+                    if (k == fqEdgeT[i] || k == fqEdgeB[i] || k == fqEdgeL[i] || k == fqEdgeR[i]) continue;
+                    
+                    int fA = fqCompA[i];
+                    int fB = fqCompB[i];
+                    if ((compU == fA && compV == fB) || (compU == fB && compV == fA)) {
+                        // Edge k would connect the two virtually-connected components
+                        // Test both cell configurations to verify it's not the final valid loop
+                        
+                        // Pattern A: Left=1, Bottom=1, Top=-1, Right=-1
+                        edgeStates[k] = 1;
+                        edgeStates[fqEdgeL[i]] = 1;
+                        edgeStates[fqEdgeB[i]] = 1;
+                        edgeStates[fqEdgeT[i]] = -1;
+                        edgeStates[fqEdgeR[i]] = -1;
+                        bool solved1 = isSolved();
+                        
+                        // Pattern B: Top=1, Right=1, Left=-1, Bottom=-1
+                        edgeStates[fqEdgeT[i]] = 1;
+                        edgeStates[fqEdgeR[i]] = 1;
+                        edgeStates[fqEdgeL[i]] = -1;
+                        edgeStates[fqEdgeB[i]] = -1;
+                        bool solved2 = isSolved();
+                        
+                        // Restore all states
+                        edgeStates[k] = 0;
+                        edgeStates[fqEdgeT[i]] = 0;
+                        edgeStates[fqEdgeB[i]] = 0;
+                        edgeStates[fqEdgeL[i]] = 0;
+                        edgeStates[fqEdgeR[i]] = 0;
                         
                         if (!solved1 && !solved2) {
                             if (!setEdgeState(k, -1)) return false;
@@ -3882,6 +4172,37 @@ RECORD_AC3_TIME(115);
                         int bl_v = getVEdgeIndex(r + 1, c);
                         int bl_h = getHEdgeIndex(r + 1, c - 1);
                         if (!deductParityPair(tr_v, tr_h, bl_v, bl_h)) AC3_RETURN_FALSE;
+
+                        // Enhanced Corner 2 adjacent outside lines deduction (including out of bounds)
+                        int outV[4] = { tl_v, tr_v, bl_v, br_v };
+                        int outH[4] = { tl_h, tr_h, bl_h, br_h };
+                        int adjMap[4][2] = { {1, 2}, {0, 3}, {0, 3}, {1, 2} };
+
+                        for (int i = 0; i < 4; i++) {
+                            bool cV = (outV[i] < 0 || outV[i] >= numEdges || edgeStates[outV[i]] == -1);
+                            bool cH = (outH[i] < 0 || outH[i] >= numEdges || edgeStates[outH[i]] == -1);
+                            if (cV && cH) {
+                                for (int k = 0; k < 2; k++) {
+                                    int adj = adjMap[i][k];
+                                    int e1 = outV[adj];
+                                    int e2 = outH[adj];
+                                    bool c1 = (e1 < 0 || e1 >= numEdges || edgeStates[e1] == -1);
+                                    bool c2 = (e2 < 0 || e2 >= numEdges || edgeStates[e2] == -1);
+
+                                    if (c1 && e2 >= 0 && e2 < numEdges && edgeStates[e2] == 0) {
+                                        if (!setEdgeState(e2, 1)) AC3_RETURN_FALSE;
+                                    } else if (c2 && e1 >= 0 && e1 < numEdges && edgeStates[e1] == 0) {
+                                        if (!setEdgeState(e1, 1)) AC3_RETURN_FALSE;
+                                    }
+
+                                    if (e1 >= 0 && e1 < numEdges && edgeStates[e1] == 1 && e2 >= 0 && e2 < numEdges && edgeStates[e2] == 0) {
+                                        if (!setEdgeState(e2, -1)) AC3_RETURN_FALSE;
+                                    } else if (e2 >= 0 && e2 < numEdges && edgeStates[e2] == 1 && e1 >= 0 && e1 < numEdges && edgeStates[e1] == 0) {
+                                        if (!setEdgeState(e1, -1)) AC3_RETURN_FALSE;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4333,6 +4654,9 @@ int check_human_solvability() {
                 
                 if (!deductIncremental()) {
                     return -11;
+                }
+                if (ac3_breakpoint_triggered) {
+                    return 0; // Immediate breakpoint stop
                 }
                 
                 int edges_after = 0;

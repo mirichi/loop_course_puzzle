@@ -1,0 +1,1795 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoopCourse Lab - 紙とペンの作問・手筋解析スタジオ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&family=Shippori+Mincho:wght@600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --paper-bg: #fcfbf9;
+            --paper-card: #ffffff;
+            --panel-bg: rgba(255, 255, 255, 0.95);
+            --border-color: #e2e8f0;
+            --border-strong: #cbd5e1;
+            --ink-black: #0f172a;
+            --ink-blue: #2563eb;
+            --ink-blue-glow: rgba(37, 99, 235, 0.15);
+            --pencil-gray: #64748b;
+            --pencil-light: #94a3b8;
+            --ink-red: #dc2626;
+            --accent-amber: #d97706;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: var(--paper-bg);
+            color: var(--text-main);
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(#e2e8f0 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        header {
+            background: #ffffff;
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.9rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            width: 36px;
+            height: 36px;
+            background: var(--ink-black);
+            color: #ffffff;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .brand-title {
+            font-size: 1.35rem;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            color: var(--ink-black);
+        }
+
+        .brand-tag {
+            background: #f1f5f9;
+            color: var(--pencil-gray);
+            font-size: 0.75rem;
+            padding: 3px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 1fr 480px;
+            gap: 20px;
+            padding: 20px;
+            flex: 1;
+            max-width: 1800px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        @media (max-width: 1100px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .editor-section {
+            background: var(--paper-card);
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 4px 25px rgba(0, 0, 0, 0.04);
+        }
+
+        .controls-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            background: #f8fafc;
+            padding: 10px 16px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .tool-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        select, input[type="text"] {
+            background: #ffffff;
+            border: 1px solid var(--border-strong);
+            color: var(--ink-black);
+            padding: 7px 12px;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        select:focus, input[type="text"]:focus {
+            border-color: var(--ink-blue);
+            box-shadow: 0 0 0 3px var(--ink-blue-glow);
+        }
+
+        .btn {
+            background: #ffffff;
+            border: 1px solid var(--border-strong);
+            color: var(--ink-black);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+        }
+
+        .btn:hover {
+            background: #f1f5f9;
+            border-color: var(--pencil-gray);
+            transform: translateY(-1px);
+        }
+
+        .btn-accent {
+            background: var(--ink-black);
+            color: #ffffff;
+            border: 1px solid var(--ink-black);
+        }
+
+        .btn-accent:hover {
+            background: #334155;
+            color: #ffffff;
+        }
+
+        .toggle-btn {
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+        }
+
+        .toggle-btn.active {
+            background: #eff6ff;
+            border-color: var(--ink-blue);
+            color: var(--ink-blue);
+            font-weight: 700;
+        }
+
+        .number-palette {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .num-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--border-strong);
+            background: #ffffff;
+            color: var(--ink-black);
+            font-size: 1.05rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .num-btn:hover, .num-btn.selected {
+            background: var(--ink-black);
+            color: #ffffff;
+            border-color: var(--ink-black);
+        }
+
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #ffffff;
+            border-radius: 12px;
+            border: 1.5px solid var(--border-strong);
+            padding: 24px;
+            min-height: 480px;
+            position: relative;
+            user-select: none;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.02);
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .canvas-area.drag-over {
+            border-color: var(--ink-blue);
+            background: #eff6ff;
+        }
+
+        svg#grid-svg {
+            max-width: 100%;
+            max-height: 650px;
+        }
+
+        .cell-rect {
+            fill: transparent;
+            cursor: pointer;
+            transition: fill 0.15s;
+        }
+
+        .cell-rect:hover {
+            fill: rgba(37, 99, 235, 0.06);
+            stroke: rgba(37, 99, 235, 0.2);
+            stroke-width: 1;
+        }
+
+        .cell-sym-guide {
+            fill: rgba(148, 163, 184, 0.08);
+            stroke: var(--pencil-light);
+            stroke-dasharray: 3 3;
+            stroke-width: 1.2;
+            rx: 4;
+            pointer-events: none;
+        }
+
+        .clue-text {
+            font-size: 22px;
+            font-weight: 800;
+            fill: var(--ink-black);
+            text-anchor: middle;
+            dominant-baseline: central;
+            pointer-events: none;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .grid-dot {
+            fill: var(--ink-black);
+        }
+
+        .analyzer-section {
+            background: var(--paper-card);
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            box-shadow: 0 4px 25px rgba(0, 0, 0, 0.04);
+            max-height: 880px;
+            overflow: hidden;
+        }
+
+        .status-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 12px 14px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 116px;
+            justify-content: space-between;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.88rem;
+            font-weight: 700;
+            padding: 6px 12px;
+            border-radius: 8px;
+            width: 100%;
+            height: 36px;
+            box-sizing: border-box;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .status-badge.solvable {
+            background: #ecfdf5;
+            color: #059669;
+            border: 1px solid #a7f3d0;
+        }
+
+        .status-badge.ambiguous {
+            background: #fffbeb;
+            color: #d97706;
+            border: 1px solid #fde68a;
+        }
+
+        .status-badge.contradiction {
+            background: #fef2f2;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+        }
+
+        .status-badge.breakpoint {
+            background: #fff1f2;
+            color: #e11d48;
+            border: 1.5px solid #fda4af;
+            box-shadow: 0 0 10px rgba(225, 29, 72, 0.15);
+            animation: bpPulse 1.5s infinite alternate;
+        }
+
+        @keyframes bpPulse {
+            0% { border-color: #fda4af; }
+            100% { border-color: #e11d48; }
+        }
+
+        /* Step Player Component Card */
+        .step-player-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .step-player-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .step-player-controls input[type="range"] {
+            flex: 1;
+            accent-color: var(--ink-blue);
+            cursor: pointer;
+            height: 6px;
+        }
+
+        .step-info-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .step-rule-label {
+            font-weight: 700;
+            color: var(--ink-blue);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 270px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .metric-box {
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 6px 10px;
+            border: 1px solid var(--border-color);
+        }
+
+        .metric-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--ink-black);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .metric-lbl {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+
+        .filter-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .btn-xs {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            border-radius: 6px;
+        }
+
+        .rules-container {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .rules-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .rules-container::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: 3px;
+        }
+
+        .category-group {
+            background: #f8fafc;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            padding: 10px 12px;
+        }
+
+        .category-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--pencil-gray);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .rule-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 8px;
+            border-radius: 6px;
+            transition: background 0.15s;
+            font-size: 0.85rem;
+            gap: 8px;
+        }
+
+        .rule-item:hover {
+            background: #f1f5f9;
+        }
+
+        .rule-item.active-hit {
+            background: #eff6ff;
+            border-left: 3px solid var(--ink-blue);
+        }
+
+        .rule-item.active-breakpoint {
+            background: #fff1f2;
+            border-left: 3px solid #e11d48;
+        }
+
+        .rule-checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: var(--text-main);
+            user-select: none;
+            flex: 1;
+        }
+
+        .rule-checkbox-label input[type="checkbox"] {
+            accent-color: var(--ink-blue);
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .rule-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-breakpoint {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .btn-breakpoint:hover {
+            background: #fee2e2;
+            border-color: #ef4444;
+            color: #dc2626;
+        }
+
+        .btn-breakpoint.active {
+            background: #e11d48;
+            border-color: #be123c;
+            color: #ffffff;
+            font-weight: 700;
+            box-shadow: 0 0 8px rgba(225, 29, 72, 0.3);
+        }
+
+        .btn-breakpoint.next {
+            background: #2563eb;
+            border-color: #1d4ed8;
+            color: #ffffff;
+            font-weight: 700;
+            box-shadow: 0 0 8px rgba(37, 99, 235, 0.3);
+        }
+
+        .hit-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 4px;
+            background: #f1f5f9;
+            color: var(--text-muted);
+        }
+
+        .hit-badge.has-hits {
+            background: var(--ink-blue);
+            color: #ffffff;
+        }
+
+        /* Highlight animations for Next-Step deductions */
+        @keyframes edgePulse {
+            0% { stroke-width: 5px; filter: drop-shadow(0 0 3px rgba(225, 29, 72, 0.8)); }
+            50% { stroke-width: 8px; filter: drop-shadow(0 0 10px rgba(225, 29, 72, 1)); }
+            100% { stroke-width: 5px; filter: drop-shadow(0 0 3px rgba(225, 29, 72, 0.8)); }
+        }
+
+        .highlight-edge-line {
+            stroke: #e11d48 !important;
+            stroke-width: 6px !important;
+            stroke-linecap: round;
+            animation: edgePulse 1.2s infinite ease-in-out;
+        }
+
+        .highlight-cross-bg {
+            fill: #ffe4e6;
+            animation: crossPulseBg 1.2s infinite ease-in-out;
+        }
+
+        @keyframes crossPulseBg {
+            0% { r: 6px; opacity: 0.6; }
+            50% { r: 12px; opacity: 1; }
+            100% { r: 6px; opacity: 0.6; }
+        }
+
+        .highlight-cross-mark {
+            stroke: #be123c !important;
+            stroke-width: 3.5px !important;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            <div class="brand-logo">✏️</div>
+            <div>
+                <span class="brand-title">LOOPCOURSE LAB</span>
+                <span class="brand-tag">紙とペンの作問・手筋解析スタジオ</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <a id="btn-play-mode" href="index.html" class="btn btn-accent">🎮 この問題でプレイモードへ</a>
+            <a href="analyzer.html" class="btn">📊 CSV分析ビューア</a>
+        </div>
+    </header>
+
+    <div class="app-container">
+        <!-- Left Side: Interactive Editor Canvas -->
+        <div class="editor-section">
+            <div class="controls-toolbar">
+                <div class="tool-group">
+                    <label for="select-size">サイズ:</label>
+                    <select id="select-size">
+                        <option value="5x5" selected>5 x 5</option>
+                        <option value="7x7">7 x 7</option>
+                        <option value="10x10">10 x 10</option>
+                        <option value="15x15">15 x 15</option>
+                        <option value="20x20">20 x 20</option>
+                    </select>
+                </div>
+
+                <div class="tool-group">
+                    <button id="btn-sym" class="btn toggle-btn active" title="180度点対称の配置枠ガイドを表示">
+                        🔄 点対称ガイド: ON
+                    </button>
+                    <button id="btn-show-solution" class="btn toggle-btn active" title="ソルバー確定線の描画切替">
+                        ✒️ 解法インク線: ON
+                    </button>
+                    <button id="btn-clear" class="btn" title="盤面をクリア">🗑️ クリア</button>
+                </div>
+
+                <!-- Number Palette -->
+                <div class="number-palette">
+                    <button class="num-btn selected" data-val="toggle">Auto</button>
+                    <button class="num-btn" data-val="0">0</button>
+                    <button class="num-btn" data-val="1">1</button>
+                    <button class="num-btn" data-val="2">2</button>
+                    <button class="num-btn" data-val="3">3</button>
+                    <button class="num-btn" data-val="-1">❌</button>
+                </div>
+            </div>
+
+            <!-- Canvas Area (Supports Drag & Drop) -->
+            <div class="canvas-area" id="canvas-area" title="カーソル下のセルにキーボード[0..3]入力可能 / 右クリックで消去">
+                <svg id="grid-svg" viewBox="0 0 400 400"></svg>
+            </div>
+
+            <!-- Export & Import Toolbar -->
+            <div class="controls-toolbar">
+                <div class="tool-group">
+                    <button id="btn-load-file" class="btn btn-accent">📁 PencilBoxファイル読み込み (.txt)</button>
+                    <input type="file" id="file-input" accept=".txt,.pbox" style="display: none;">
+                    <button id="btn-copy-url" class="btn">🔗 URL共有</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Side: Real-time Analyzer & Rule Filter Panel -->
+        <div class="analyzer-section">
+            <!-- Overall Status Card -->
+            <div class="status-card">
+                <div id="status-badge" class="status-badge solvable">
+                    🟢 許可手筋のみで完全解法可能
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-box">
+                        <div id="val-steps" class="metric-val">0</div>
+                        <div class="metric-lbl">推論ステップ</div>
+                    </div>
+                    <div class="metric-box">
+                        <div id="val-max-score" class="metric-val">Score 0</div>
+                        <div class="metric-lbl">最高使用手筋</div>
+                    </div>
+                    <div class="metric-box">
+                        <div id="val-time" class="metric-val">0 ms</div>
+                        <div class="metric-lbl">WASM解析時間</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step Player Component Card -->
+            <div class="step-player-card">
+                <div class="step-player-controls">
+                    <button id="btn-step-prev" class="btn btn-xs" title="1手戻る">⏮ 戻る</button>
+                    <button id="btn-step-play" class="btn btn-xs" title="自動再生 / 一時停止">▶ 再生</button>
+                    <button id="btn-step-next" class="btn btn-xs" title="1手進む">進む ⏭</button>
+                    <input type="range" id="step-slider" min="0" max="0" value="0">
+                </div>
+                <div class="step-info-row">
+                    <span id="step-rule-label" class="step-rule-label">完解状態 (全手目)</span>
+                    <span id="val-step-progress" style="font-family: 'JetBrains Mono'; font-weight:700; color: var(--ink-black);">0 / 0</span>
+                </div>
+            </div>
+
+            <!-- Filter Preset Actions -->
+            <div class="filter-actions">
+                <label>手筋有効設定 & 🛑ブレイク停止:</label>
+                <div style="display:flex; gap:6px;">
+                    <button id="btn-all-on" class="btn btn-xs">全ON</button>
+                    <button id="btn-all-off" class="btn btn-xs">全OFF</button>
+                    <button id="btn-basic-only" class="btn btn-xs">基本のみ</button>
+                    <button id="btn-clear-bp" class="btn btn-xs" title="すべてのブレイクポイントを解除">🛑 解除</button>
+                </div>
+            </div>
+
+            <!-- Rules Tree List -->
+            <div class="rules-container" id="rules-tree"></div>
+        </div>
+    </div>
+
+    <!-- Load WASM with Cache Buster -->
+    <script src="js/loopcourse.js?v=20260728_v9"></script>
+    <script>
+        const RULE_GROUPS = [
+            {
+                title: "1. 基本ルール (Score 1)",
+                color: "#059669",
+                rules: [
+                    { id: 101, name: "Basic (Cell Clue)" },
+                    { id: 102, name: "Basic (Dot Line Limit)" },
+                    { id: 103, name: "Basic (Dot Constraint)" },
+                    { id: 104, name: "Basic (0 All Crosses)" }
+                ]
+            },
+            {
+                title: "2. 初級定石 (Score 2)",
+                color: "#2563eb",
+                rules: [
+                    { id: 111, name: "Easy (Corner 0)" },
+                    { id: 112, name: "Easy (Corner 3)" },
+                    { id: 113, name: "Easy (Adjacent 3s)" }
+                ]
+            },
+            {
+                title: "3. 中級定石 (Score 3)",
+                color: "#7c3aed",
+                rules: [
+                    { id: 115, name: "Medium (Clue 2 Diagonal Entry)" },
+                    { id: 121, name: "Medium (Corner 2)" },
+                    { id: 122, name: "Medium (Diagonal 1)" },
+                    { id: 123, name: "Medium (Diagonal 3)" },
+                    { id: 124, name: "Medium (Universal SLE)" },
+                    { id: 125, name: "Medium (General 2 XOR)" },
+                    { id: 126, name: "Medium (Corner Dot Heuristic)" }
+                ]
+            },
+            {
+                title: "4. 上級定石 (Score 4)",
+                color: "#d97706",
+                rules: [
+                    { id: 131, name: "Hard (Corner 3 Ext)" },
+                    { id: 132, name: "Corner 2 Pair" },
+                    { id: 133, name: "Advanced 2" },
+                    { id: 134, name: "Line entering 3" },
+                    { id: 135, name: "Line entering 1" },
+                    { id: 136, name: "Clue 2 Early SLE" },
+                    { id: 137, name: "Hard (2 and 3 Diagonal)" },
+                    { id: 138, name: "Dot Border Theorem" },
+                    { id: 140, name: "Diag 2-3 Outer X/Line" }
+                ]
+            },
+            {
+                title: "5. 大域・広域手筋 (Score 5-7)",
+                color: "#db2777",
+                rules: [
+                    { id: 141, name: "Global (Early Closed Loop)" },
+                    { id: 142, name: "Global (Jordan Curve)" },
+                    { id: 143, name: "Virtual Path Loop Prevention" },
+                    { id: 144, name: "Inside/Outside Coloring" },
+                    { id: 145, name: "Corridor Method" },
+                    { id: 153, name: "Global (Loop Sim-Lookahead)" }
+                ]
+            },
+            {
+                title: "6. 究極・パリティ (Score 8)",
+                color: "#dc2626",
+                rules: [
+                    { id: 154, name: "Extreme (Contradiction Sim)" },
+                    { id: 161, name: "Extreme (LUT Deduction)" }
+                ]
+            },
+            {
+                title: "7. 代数・限界突破 (Score 9-10)",
+                color: "#9333ea",
+                rules: [
+                    { id: 151, name: "Global (GF2 Parity)" },
+                    { id: 152, name: "Global (Bridge Connectivity)" },
+                    { id: 155, name: "Global (Full Sim-Lookahead)" },
+                    { id: 200, name: "Lookahead (Depth)" }
+                ]
+            }
+        ];
+
+        let WASM = null;
+        let rows = 5, cols = 5;
+        let clues = [];
+        let ruleEnabled = {};
+        let breakpointRuleId = null;
+        let breakpointHitIndices = [];
+        let breakpointOccurrenceIndex = 0;
+
+        let isSymmetric = true;
+        let showSolution = true;
+        let activeNum = "toggle";
+        let hoveredCell = null;
+
+        // Player & Highlight State
+        let currentEdgeStates = [];
+        let highlightedEdgeIndices = new Set();
+        let activeBreakpointRuleName = "";
+        let activeStep = null; // null = default to 100% full solved state!
+        let isPlaying = false;
+        let playTimer = null;
+
+        RULE_GROUPS.forEach(g => {
+            g.rules.forEach(r => {
+                ruleEnabled[r.id] = true;
+            });
+        });
+
+        function savePuzzleToStorage() {
+            try {
+                localStorage.setItem('lab_custom_puzzle', JSON.stringify({
+                    rows: rows,
+                    cols: cols,
+                    clues: clues,
+                    time: Date.now()
+                }));
+            } catch(e) {}
+        }
+
+        function restorePuzzleFromStorage() {
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                const pParam = urlParams.get('p');
+                if (pParam && pParam.includes('_')) {
+                    const [dim, str] = pParam.split('_');
+                    const [c, r] = dim.split('x').map(Number);
+                    if (r && c && str && str.length >= r * c) {
+                        rows = r;
+                        cols = c;
+                        clues = [];
+                        for (let i = 0; i < r * c; i++) {
+                            const char = str[i];
+                            clues.push((char === '.' || char === '-') ? -1 : parseInt(char, 10));
+                        }
+                        savePuzzleToStorage();
+                        return true;
+                    }
+                }
+
+                const stored = localStorage.getItem('lab_custom_puzzle');
+                if (stored) {
+                    const data = JSON.parse(stored);
+                    if (data && data.rows && data.cols && Array.isArray(data.clues)) {
+                        rows = data.rows;
+                        cols = data.cols;
+                        clues = data.clues;
+                        return true;
+                    }
+                }
+            } catch(e) {}
+            return false;
+        }
+
+        createLoopCourseModule().then(Module => {
+            WASM = {
+                HEAP8: Module.HEAP8,
+                HEAP32: Module.HEAP32,
+                init_grid: Module.cwrap('init_grid', null, ['number', 'number']),
+                get_clues_ptr: Module.cwrap('get_clues_ptr', 'number', []),
+                get_edge_states_ptr: Module.cwrap('get_edge_states_ptr', 'number', []),
+                analyze_puzzle: Module.cwrap('analyze_puzzle', 'number', ['string']),
+                get_ac3_rule_hit_count: Module.cwrap('get_ac3_rule_hit_count', 'number', ['number']),
+                reset_ac3_rule_times: Module.cwrap('reset_ac3_rule_times', null, []),
+                get_deduction_log_count: Module.cwrap('get_deduction_log_count', 'number', []),
+                get_deduction_logs_ptr: Module.cwrap('get_deduction_logs_ptr', 'number', []),
+                set_rule_enabled: Module.cwrap('set_rule_enabled', null, ['number', 'boolean']),
+                set_all_rules_enabled: Module.cwrap('set_all_rules_enabled', null, ['boolean']),
+                set_breakpoint_rule_id: Module.cwrap('set_breakpoint_rule_id', null, ['number']),
+                is_breakpoint_triggered: Module.cwrap('is_breakpoint_triggered', 'number', [])
+            };
+
+            WASM.set_all_rules_enabled(true);
+            renderRuleTree();
+            setupEvents();
+
+            if (restorePuzzleFromStorage()) {
+                const restoredClues = [...clues];
+                resetGrid(rows, cols, true); // Skip analyze in resetGrid during restore
+                clues = restoredClues;
+                savePuzzleToStorage();
+                renderSVGGrid();
+                activeStep = null;
+                analyzeRealtime();
+            } else {
+                resetGrid(5, 5);
+            }
+        }).catch(err => {
+            console.error("WASM Module Load Error:", err);
+            const badge = document.getElementById('status-badge');
+            if (badge) {
+                badge.className = "status-badge contradiction";
+                badge.textContent = "🔴 WASMモジュールの読み込みに失敗しました。再読み込みしてください。";
+            }
+        });
+
+        function renderRuleTree() {
+            const container = document.getElementById('rules-tree');
+            container.innerHTML = '';
+
+            RULE_GROUPS.forEach(g => {
+                const groupEl = document.createElement('div');
+                groupEl.className = 'category-group';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'category-title';
+                titleEl.style.color = g.color;
+                titleEl.textContent = g.title;
+                groupEl.appendChild(titleEl);
+
+                g.rules.forEach(r => {
+                    const itemEl = document.createElement('div');
+                    itemEl.className = 'rule-item' + (breakpointRuleId === r.id ? ' active-breakpoint' : '');
+                    itemEl.id = 'rule-item-' + r.id;
+
+                    itemEl.innerHTML = '<label class="rule-checkbox-label">' +
+                        '<input type="checkbox" id="chk-rule-' + r.id + '" ' + (ruleEnabled[r.id] ? 'checked' : '') + '>' +
+                        '<span>' + r.name + '</span>' +
+                        '</label>' +
+                        '<div class="rule-actions">' +
+                        '<button id="btn-bp-' + r.id + '" class="btn-breakpoint" title="この手筋が使用された箇所へジャンプ/連投">🛑 Stop</button>' +
+                        '<span id="hit-badge-' + r.id + '" class="hit-badge" title="このパズルを解くのに使われた回数">0</span>' +
+                        '</div>';
+
+                    groupEl.appendChild(itemEl);
+                });
+
+                container.appendChild(groupEl);
+            });
+
+            RULE_GROUPS.forEach(g => {
+                g.rules.forEach(r => {
+                    document.getElementById('chk-rule-' + r.id).addEventListener('change', (e) => {
+                        ruleEnabled[r.id] = e.target.checked;
+                        WASM.set_rule_enabled(r.id, e.target.checked);
+                        activeStep = null; // Auto advance to maximum solved step for updated rule configuration!
+                        analyzeRealtime();
+                    });
+
+                    document.getElementById('btn-bp-' + r.id).addEventListener('click', () => {
+                        onBreakpointButtonClick(r.id);
+                    });
+                });
+            });
+        }
+
+        function onBreakpointButtonClick(ruleId) {
+            if (breakpointRuleId === ruleId) {
+                const hitCount = breakpointHitIndices.length;
+                if (hitCount === 0) {
+                    breakpointRuleId = null;
+                    breakpointOccurrenceIndex = 0;
+                    activeStep = null;
+                } else if (breakpointOccurrenceIndex + 1 < hitCount) {
+                    breakpointOccurrenceIndex++;
+                    activeStep = breakpointHitIndices[breakpointOccurrenceIndex] + 1;
+                } else {
+                    breakpointRuleId = null;
+                    breakpointOccurrenceIndex = 0;
+                    activeStep = null; // Reset to 100% full solved state!
+                }
+            } else {
+                breakpointRuleId = ruleId;
+                breakpointOccurrenceIndex = 0;
+                activeStep = null; // Auto-sync to first hit index in analyzeRealtime
+            }
+            renderRuleTree();
+            analyzeRealtime();
+        }
+
+        function updateBreakpointButtonLabels() {
+            RULE_GROUPS.forEach(g => {
+                g.rules.forEach(r => {
+                    const btn = document.getElementById('btn-bp-' + r.id);
+                    if (!btn) return;
+
+                    if (breakpointRuleId === r.id) {
+                        const hitCount = breakpointHitIndices.length;
+                        if (hitCount > 1) {
+                            if (breakpointOccurrenceIndex + 1 < hitCount) {
+                                btn.className = 'btn-breakpoint next';
+                                btn.textContent = '⏭ Next (' + (breakpointOccurrenceIndex + 1) + '/' + hitCount + ')';
+                            } else {
+                                btn.className = 'btn-breakpoint active';
+                                btn.textContent = '🛑 解除 (' + hitCount + '/' + hitCount + ')';
+                            }
+                        } else if (hitCount === 1) {
+                            btn.className = 'btn-breakpoint active';
+                            btn.textContent = '🛑 解除';
+                        } else {
+                            btn.className = 'btn-breakpoint active';
+                            btn.textContent = '🛑 解除 (0)';
+                        }
+                    } else {
+                        btn.className = 'btn-breakpoint';
+                        btn.textContent = '🛑 Stop';
+                    }
+                });
+            });
+        }
+
+        function resetGrid(r, c, skipAnalyze = false) {
+            rows = r;
+            cols = c;
+            clues = new Array(rows * cols).fill(-1);
+            activeStep = null;
+            breakpointRuleId = null;
+            breakpointHitIndices = [];
+            breakpointOccurrenceIndex = 0;
+            
+            const selectEl = document.getElementById('select-size');
+            const targetVal = c + 'x' + r;
+            let hasOption = false;
+            for (let opt of selectEl.options) {
+                if (opt.value === targetVal) { hasOption = true; break; }
+            }
+            if (!hasOption) {
+                const newOpt = document.createElement('option');
+                newOpt.value = targetVal;
+                newOpt.textContent = c + ' x ' + r;
+                selectEl.appendChild(newOpt);
+            }
+            selectEl.value = targetVal;
+
+            savePuzzleToStorage();
+            renderSVGGrid();
+            if (!skipAnalyze) {
+                analyzeRealtime();
+            }
+        }
+
+        function parsePencilBox(text) {
+            const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            if (lines.length < 3) return null;
+
+            const r = parseInt(lines[0], 10);
+            const c = parseInt(lines[1], 10);
+            if (isNaN(r) || isNaN(c) || r <= 0 || c <= 0) return null;
+
+            const parsedClues = [];
+            for (let i = 2; i < 2 + r; i++) {
+                if (!lines[i]) break;
+                const tokens = lines[i].split(/\s+/);
+                for (let j = 0; j < c; j++) {
+                    const tok = tokens[j];
+                    if (!tok || tok === '.' || tok === '-' || tok === '?') {
+                        parsedClues.push(-1);
+                    } else {
+                        const val = parseInt(tok, 10);
+                        parsedClues.push(isNaN(val) ? -1 : val);
+                    }
+                }
+            }
+            return { rows: r, cols: c, clues: parsedClues };
+        }
+
+        function loadPencilBoxText(text) {
+            const data = parsePencilBox(text);
+            if (!data) {
+                alert("PencilBoxファイルの形式が正しくありません。");
+                return;
+            }
+            rows = data.rows;
+            cols = data.cols;
+            clues = data.clues;
+            activeStep = null;
+            breakpointRuleId = null;
+
+            resetGrid(rows, cols, true);
+            for (let i = 0; i < clues.length; i++) clues[i] = data.clues[i];
+
+            savePuzzleToStorage();
+            renderSVGGrid();
+            activeStep = null;
+            analyzeRealtime();
+        }
+
+        function renderSVGGrid() {
+            const svg = document.getElementById('grid-svg');
+            svg.innerHTML = '';
+
+            const cellSize = 40;
+            const padding = 20;
+            const width = cols * cellSize + padding * 2;
+            const height = rows * cellSize + padding * 2;
+            svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+
+            const edgesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            edgesGroup.id = 'solution-edges-group';
+            svg.appendChild(edgesGroup);
+
+            const requiredSymCells = new Set();
+            if (isSymmetric) {
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const idx = r * cols + c;
+                        if (clues[idx] !== -1) {
+                            const symR = rows - 1 - r;
+                            const symC = cols - 1 - c;
+                            const symIdx = symR * cols + symC;
+                            if (clues[symIdx] === -1) {
+                                requiredSymCells.add(symIdx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const idx = r * cols + c;
+                    const x = padding + c * cellSize;
+                    const y = padding + r * cellSize;
+
+                    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    rect.setAttribute('x', x);
+                    rect.setAttribute('y', y);
+                    rect.setAttribute('width', cellSize);
+                    rect.setAttribute('height', cellSize);
+                    rect.setAttribute('class', 'cell-rect');
+                    
+                    rect.addEventListener('mouseenter', () => { hoveredCell = { r, c }; });
+                    rect.addEventListener('mouseleave', () => { if (hoveredCell && hoveredCell.r === r && hoveredCell.c === c) hoveredCell = null; });
+                    
+                    rect.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        onCellClick(r, c);
+                    });
+
+                    rect.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        clues[r * cols + c] = -1;
+                        activeStep = null;
+                        savePuzzleToStorage();
+                        renderSVGGrid();
+                        analyzeRealtime();
+                    });
+
+                    svg.appendChild(rect);
+
+                    if (requiredSymCells.has(idx)) {
+                        const guideRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        guideRect.setAttribute('x', x + 3);
+                        guideRect.setAttribute('y', y + 3);
+                        guideRect.setAttribute('width', cellSize - 6);
+                        guideRect.setAttribute('height', cellSize - 6);
+                        guideRect.setAttribute('class', 'cell-sym-guide');
+                        svg.appendChild(guideRect);
+
+                        const guideTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                        guideTxt.setAttribute('x', x + cellSize / 2);
+                        guideTxt.setAttribute('y', y + cellSize / 2);
+                        guideTxt.setAttribute('class', 'clue-text');
+                        guideTxt.setAttribute('style', 'fill: #94a3b8; opacity: 0.6; font-size: 14px;');
+                        guideTxt.textContent = '·';
+                        svg.appendChild(guideTxt);
+                    }
+
+                    if (clues[idx] !== -1) {
+                        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                        txt.setAttribute('x', x + cellSize / 2);
+                        txt.setAttribute('y', y + cellSize / 2);
+                        txt.setAttribute('class', 'clue-text');
+                        txt.textContent = clues[idx];
+                        svg.appendChild(txt);
+                    }
+                }
+            }
+
+            for (let r = 0; r <= rows; r++) {
+                for (let c = 0; c <= cols; c++) {
+                    const x = padding + c * cellSize;
+                    const y = padding + r * cellSize;
+                    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    dot.setAttribute('cx', x);
+                    dot.setAttribute('cy', y);
+                    dot.setAttribute('r', 2.8);
+                    dot.setAttribute('class', 'grid-dot');
+                    svg.appendChild(dot);
+                }
+            }
+        }
+
+        function onCellClick(r, c) {
+            const idx = r * cols + c;
+            let val;
+
+            if (activeNum === "toggle") {
+                if (clues[idx] === -1) {
+                    val = 0;
+                } else if (clues[idx] === 3) {
+                    val = -1;
+                } else {
+                    val = clues[idx] + 1;
+                }
+            } else {
+                val = parseInt(activeNum, 10);
+            }
+
+            clues[idx] = val;
+            activeStep = null; // Always default to 100% full solved state on cell edit!
+            savePuzzleToStorage();
+
+            renderSVGGrid();
+            analyzeRealtime();
+        }
+
+        function getRuleNameById(id) {
+            let name = "Basic";
+            RULE_GROUPS.forEach(g => g.rules.forEach(r => {
+                if (r.id === id) name = r.name;
+            }));
+            return name;
+        }
+
+        function analyzeRealtime() {
+            if (!WASM) return;
+
+            try {
+                // Step 1: Run full deduction without WASM breakpoint to get FULL TOTAL STEPS
+                WASM.reset_ac3_rule_times();
+                WASM.init_grid(rows, cols);
+                const cluesPtr = WASM.get_clues_ptr();
+
+                for (let i = 0; i < rows * cols; i++) {
+                    WASM.HEAP8[cluesPtr + i] = clues[i];
+                }
+
+                RULE_GROUPS.forEach(g => {
+                    g.rules.forEach(r => {
+                        WASM.set_rule_enabled(r.id, ruleEnabled[r.id]);
+                    });
+                });
+
+                WASM.set_breakpoint_rule_id(-1);
+
+                const tStart = performance.now();
+                const res = WASM.analyze_puzzle("Master");
+                const tEnd = performance.now();
+                const duration = (tEnd - tStart).toFixed(1);
+                const totalSteps = WASM.get_deduction_log_count();
+
+                const logsPtr = WASM.get_deduction_logs_ptr();
+                const numTotalEdges = (rows + 1) * cols + rows * (cols + 1);
+
+                // Collect ALL occurrence indices for breakpointRuleId
+                breakpointHitIndices = [];
+                if (breakpointRuleId !== null) {
+                    let inBatch = false;
+                    for (let i = 0; i < totalSteps; i++) {
+                        const rId = WASM.HEAP32[(logsPtr + i * 16 + 4) >> 2];
+                        if (rId === breakpointRuleId) {
+                            if (!inBatch) {
+                                breakpointHitIndices.push(i);
+                                inBatch = true;
+                            }
+                        } else {
+                            inBatch = false;
+                        }
+                    }
+                }
+
+                const hitCount = breakpointHitIndices.length;
+                const triggeredBreakpoint = (breakpointRuleId !== null && hitCount > 0);
+
+                // Update Slider Bounds
+                const slider = document.getElementById('step-slider');
+                slider.max = totalSteps;
+
+                // Default to 100% full solved state unless a breakpoint was just selected!
+                if (triggeredBreakpoint && activeStep === null) {
+                    if (breakpointOccurrenceIndex >= hitCount) {
+                        breakpointOccurrenceIndex = 0;
+                    }
+                    activeStep = breakpointHitIndices[breakpointOccurrenceIndex] + 1;
+                } else if (activeStep === null || activeStep > totalSteps) {
+                    activeStep = totalSteps; // DEFAULT: 100% FULL SOLVED STATE!
+                }
+
+                slider.value = activeStep;
+                document.getElementById('val-step-progress').textContent = activeStep + ' / ' + totalSteps;
+
+                // Update Dynamic Breakpoint Button Labels (Stop / Next (X/Y) / Clear)
+                updateBreakpointButtonLabels();
+
+                // Reconstruct edge states & highlights for current activeStep
+                highlightedEdgeIndices.clear();
+                currentEdgeStates = new Array(numTotalEdges).fill(0);
+                activeBreakpointRuleName = "";
+
+                if (triggeredBreakpoint) {
+                    RULE_GROUPS.forEach(g => g.rules.forEach(r => {
+                        if (r.id === breakpointRuleId) activeBreakpointRuleName = r.name;
+                    }));
+                }
+
+                // GUARANTEED 100% SOLVED DISPLAY WHEN NO BREAKPOINT OR VIEWING MAX STEP!
+                if (!triggeredBreakpoint && activeStep === totalSteps) {
+                    const fullEdgePtr = WASM.get_edge_states_ptr();
+                    for (let e = 0; e < currentEdgeStates.length; e++) {
+                        currentEdgeStates[e] = WASM.HEAP8[fullEdgePtr + e];
+                    }
+                    document.getElementById('step-rule-label').textContent = totalSteps > 0 ? "完解状態 (全 " + totalSteps + " 手目)" : "初期状態 (0手目)";
+                } else if (activeStep === 0) {
+                    document.getElementById('step-rule-label').textContent = "開始状態 (0手目)";
+                } else if (activeStep > 0 && activeStep <= totalSteps) {
+                    // Replay deduction logs up to activeStep
+                    for (let i = 0; i < activeStep; i++) {
+                        const eIdx = WASM.HEAP32[(logsPtr + i * 16) >> 2];
+                        const st = WASM.HEAP32[(logsPtr + i * 16 + 12) >> 2];
+                        if (eIdx >= 0 && eIdx < numTotalEdges) {
+                            currentEdgeStates[eIdx] = st;
+                        }
+                    }
+
+                    const lastIdx = activeStep - 1;
+                    const lastEIdx = WASM.HEAP32[(logsPtr + lastIdx * 16) >> 2];
+                    const lastRId = WASM.HEAP32[(logsPtr + lastIdx * 16 + 4) >> 2];
+
+                    // If currently viewing the breakpoint step, highlight all edges deduced in its batch!
+                    if (triggeredBreakpoint && lastRId === breakpointRuleId) {
+                        for (let i = lastIdx; i < totalSteps; i++) {
+                            const rId = WASM.HEAP32[(logsPtr + i * 16 + 4) >> 2];
+                            if (rId === breakpointRuleId) {
+                                const eIdx = WASM.HEAP32[(logsPtr + i * 16) >> 2];
+                                const st = WASM.HEAP32[(logsPtr + i * 16 + 12) >> 2];
+                                if (eIdx >= 0 && eIdx < numTotalEdges) {
+                                    currentEdgeStates[eIdx] = st;
+                                    highlightedEdgeIndices.add(eIdx);
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        document.getElementById('step-rule-label').textContent = '🛑 [' + breakpointRuleId + '] ' + activeBreakpointRuleName + ' (' + (breakpointOccurrenceIndex + 1) + '/' + hitCount + ' 回目)';
+                    } else {
+                        if (lastEIdx >= 0 && lastEIdx < numTotalEdges) {
+                            highlightedEdgeIndices.add(lastEIdx);
+                        }
+                        document.getElementById('step-rule-label').textContent = '[' + lastRId + '] ' + getRuleNameById(lastRId);
+                    }
+                }
+
+                const badge = document.getElementById('status-badge');
+                if (triggeredBreakpoint) {
+                    badge.className = "status-badge breakpoint";
+                    badge.title = "🛑 手筋 [" + breakpointRuleId + "] " + activeBreakpointRuleName + " 発動 (" + (breakpointOccurrenceIndex + 1) + "/" + hitCount + " 回目 / 全 " + totalSteps + " 手)";
+                    badge.innerHTML = "🛑 手筋 [" + breakpointRuleId + "] 発動 (" + (breakpointOccurrenceIndex + 1) + "/" + hitCount + " 回目 / 全 " + totalSteps + " 手)";
+                } else if (res === 1) {
+                    badge.className = "status-badge solvable";
+                    badge.title = "🟢 許可手筋のみで完全解法可能";
+                    badge.innerHTML = "🟢 許可手筋のみで完全解法可能";
+                } else if (res === 0) {
+                    badge.className = "status-badge ambiguous";
+                    badge.title = "🟡 複数解あり / 手筋不足";
+                    badge.innerHTML = "🟡 複数解あり / 手筋不足";
+                } else {
+                    badge.className = "status-badge contradiction";
+                    badge.title = "🔴 解なし / 矛盾が発生";
+                    badge.innerHTML = "🔴 解なし / 矛盾が発生";
+                }
+
+                document.getElementById('val-steps').textContent = totalSteps;
+                document.getElementById('val-time').textContent = duration + ' ms';
+
+                let maxRuleId = 0;
+                let maxRuleName = "Basic";
+
+                RULE_GROUPS.forEach(g => {
+                    g.rules.forEach(r => {
+                        const hits = WASM.get_ac3_rule_hit_count(r.id);
+                        const badgeEl = document.getElementById('hit-badge-' + r.id);
+                        const itemEl = document.getElementById('rule-item-' + r.id);
+
+                        badgeEl.textContent = hits;
+
+                        if (hits > 0) {
+                            badgeEl.className = "hit-badge has-hits";
+                            itemEl.classList.add('active-hit');
+                            if (r.id > maxRuleId) {
+                                maxRuleId = r.id;
+                                maxRuleName = r.name;
+                            }
+                        } else {
+                            badgeEl.className = "hit-badge";
+                            itemEl.classList.remove('active-hit');
+                        }
+                    });
+                });
+
+                document.getElementById('val-max-score').textContent = maxRuleId > 0 ? '[' + maxRuleId + '] ' + maxRuleName : "Basic";
+                renderEdgeSolution();
+            } catch(err) {
+                console.error("Analysis Runtime Exception:", err);
+            }
+        }
+
+        function renderEdgeSolution() {
+            const edgesGroup = document.getElementById('solution-edges-group');
+            if (!edgesGroup) return;
+            edgesGroup.innerHTML = '';
+
+            if (!showSolution) return;
+
+            const numH = (rows + 1) * cols;
+            const cellSize = 40;
+            const padding = 20;
+
+            // Draw H Edges
+            for (let r = 0; r <= rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const idx = r * cols + c;
+                    const state = currentEdgeStates[idx];
+                    if (state === 0) continue;
+
+                    const isHighlighted = highlightedEdgeIndices.has(idx);
+
+                    const x1 = padding + c * cellSize;
+                    const y1 = padding + r * cellSize;
+                    const x2 = x1 + cellSize;
+                    const y2 = y1;
+
+                    if (state === 1) {
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.setAttribute('x1', x1);
+                        line.setAttribute('y1', y1);
+                        line.setAttribute('x2', x2);
+                        line.setAttribute('y2', y2);
+                        
+                        if (isHighlighted) {
+                            line.setAttribute('class', 'highlight-edge-line');
+                        } else {
+                            line.setAttribute('stroke', '#2563eb');
+                            line.setAttribute('stroke-width', '3.5');
+                            line.setAttribute('stroke-linecap', 'round');
+                        }
+                        edgesGroup.appendChild(line);
+                    } else if (state === -1) {
+                        const midX = (x1 + x2) / 2;
+                        const midY = (y1 + y2) / 2;
+                        const size = isHighlighted ? 6 : 3.5;
+
+                        if (isHighlighted) {
+                            const bgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                            bgCircle.setAttribute('cx', midX);
+                            bgCircle.setAttribute('cy', midY);
+                            bgCircle.setAttribute('class', 'highlight-cross-bg');
+                            edgesGroup.appendChild(bgCircle);
+                        }
+
+                        const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        l1.setAttribute('x1', midX - size);
+                        l1.setAttribute('y1', midY - size);
+                        l1.setAttribute('x2', midX + size);
+                        l1.setAttribute('y2', midY + size);
+                        l1.setAttribute('stroke', isHighlighted ? '#e11d48' : '#dc2626');
+                        l1.setAttribute('stroke-width', isHighlighted ? '3.5' : '2');
+                        if (isHighlighted) l1.setAttribute('class', 'highlight-cross-mark');
+                        edgesGroup.appendChild(l1);
+
+                        const l2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        l2.setAttribute('x1', midX + size);
+                        l2.setAttribute('y1', midY - size);
+                        l2.setAttribute('x2', midX - size);
+                        l2.setAttribute('y2', midY + size);
+                        l2.setAttribute('stroke', isHighlighted ? '#e11d48' : '#dc2626');
+                        l2.setAttribute('stroke-width', isHighlighted ? '3.5' : '2');
+                        if (isHighlighted) l2.setAttribute('class', 'highlight-cross-mark');
+                        edgesGroup.appendChild(l2);
+                    }
+                }
+            }
+
+            // Draw V Edges
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c <= cols; c++) {
+                    const idx = numH + r * (cols + 1) + c;
+                    const state = currentEdgeStates[idx];
+                    if (state === 0) continue;
+
+                    const isHighlighted = highlightedEdgeIndices.has(idx);
+
+                    const x1 = padding + c * cellSize;
+                    const y1 = padding + r * cellSize;
+                    const x2 = x1;
+                    const y2 = y1 + cellSize;
+
+                    if (state === 1) {
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.setAttribute('x1', x1);
+                        line.setAttribute('y1', y1);
+                        line.setAttribute('x2', x2);
+                        line.setAttribute('y2', y2);
+
+                        if (isHighlighted) {
+                            line.setAttribute('class', 'highlight-edge-line');
+                        } else {
+                            line.setAttribute('stroke', '#2563eb');
+                            line.setAttribute('stroke-width', '3.5');
+                            line.setAttribute('stroke-linecap', 'round');
+                        }
+                        edgesGroup.appendChild(line);
+                    } else if (state === -1) {
+                        const midX = (x1 + x2) / 2;
+                        const midY = (y1 + y2) / 2;
+                        const size = isHighlighted ? 6 : 3.5;
+
+                        if (isHighlighted) {
+                            const bgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                            bgCircle.setAttribute('cx', midX);
+                            bgCircle.setAttribute('cy', midY);
+                            bgCircle.setAttribute('class', 'highlight-cross-bg');
+                            edgesGroup.appendChild(bgCircle);
+                        }
+
+                        const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        l1.setAttribute('x1', midX - size);
+                        l1.setAttribute('y1', midY - size);
+                        l1.setAttribute('x2', midX + size);
+                        l1.setAttribute('y2', midY + size);
+                        l1.setAttribute('stroke', isHighlighted ? '#e11d48' : '#dc2626');
+                        l1.setAttribute('stroke-width', isHighlighted ? '3.5' : '2');
+                        if (isHighlighted) l1.setAttribute('class', 'highlight-cross-mark');
+                        edgesGroup.appendChild(l1);
+
+                        const l2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        l2.setAttribute('x1', midX + size);
+                        l2.setAttribute('y1', midY - size);
+                        l2.setAttribute('x2', midX - size);
+                        l2.setAttribute('y2', midY + size);
+                        l2.setAttribute('stroke', isHighlighted ? '#e11d48' : '#dc2626');
+                        l2.setAttribute('stroke-width', isHighlighted ? '3.5' : '2');
+                        if (isHighlighted) l2.setAttribute('class', 'highlight-cross-mark');
+                        edgesGroup.appendChild(l2);
+                    }
+                }
+            }
+        }
+
+        function toggleAutoPlay() {
+            const playBtn = document.getElementById('btn-step-play');
+            if (isPlaying) {
+                isPlaying = false;
+                clearInterval(playTimer);
+                playBtn.textContent = '▶ 再生';
+                playBtn.classList.remove('btn-accent');
+            } else {
+                const totalSteps = WASM ? WASM.get_deduction_log_count() : 0;
+                if (totalSteps === 0) return;
+
+                if (activeStep >= totalSteps) {
+                    activeStep = 0;
+                }
+                isPlaying = true;
+                playBtn.textContent = '⏸ 停止';
+                playBtn.classList.add('btn-accent');
+
+                playTimer = setInterval(() => {
+                    const steps = WASM ? WASM.get_deduction_log_count() : 0;
+                    if (activeStep < steps) {
+                        activeStep++;
+                        analyzeRealtime();
+                    } else {
+                        toggleAutoPlay();
+                    }
+                }, 150);
+            }
+        }
+
+        function setupEvents() {
+            window.addEventListener('keydown', (e) => {
+                if (!hoveredCell) return;
+                const { r, c } = hoveredCell;
+                const idx = r * cols + c;
+
+                if (['0', '1', '2', '3'].includes(e.key)) {
+                    clues[idx] = parseInt(e.key, 10);
+                    activeStep = null;
+                    savePuzzleToStorage();
+                    renderSVGGrid();
+                    analyzeRealtime();
+                } else if (['Backspace', 'Delete', 'Escape', 'c', 'x'].includes(e.key)) {
+                    clues[idx] = -1;
+                    activeStep = null;
+                    savePuzzleToStorage();
+                    renderSVGGrid();
+                    analyzeRealtime();
+                }
+            });
+
+            document.getElementById('select-size').addEventListener('change', (e) => {
+                const [c, r] = e.target.value.split('x').map(Number);
+                resetGrid(r, c);
+            });
+
+            const btnPlayMode = document.getElementById('btn-play-mode');
+            if (btnPlayMode) {
+                btnPlayMode.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    savePuzzleToStorage();
+                    const encodedClues = clues.map(c => c === -1 ? '.' : c).join('');
+                    const playUrl = 'index.html?p=' + cols + 'x' + rows + '_' + encodedClues;
+                    window.location.href = playUrl;
+                });
+            }
+
+            const btnSym = document.getElementById('btn-sym');
+            btnSym.addEventListener('click', () => {
+                isSymmetric = !isSymmetric;
+                btnSym.classList.toggle('active', isSymmetric);
+                btnSym.textContent = '🔄 点対称ガイド: ' + (isSymmetric ? 'ON' : 'OFF');
+                renderSVGGrid();
+            });
+
+            const btnShowSol = document.getElementById('btn-show-solution');
+            btnShowSol.addEventListener('click', () => {
+                showSolution = !showSolution;
+                btnShowSol.classList.toggle('active', showSolution);
+                btnShowSol.textContent = '✒️ 解法インク線: ' + (showSolution ? 'ON' : 'OFF');
+                renderEdgeSolution();
+            });
+
+            document.getElementById('btn-clear').addEventListener('click', () => {
+                clues.fill(-1);
+                activeStep = null;
+                savePuzzleToStorage();
+                renderSVGGrid();
+                analyzeRealtime();
+            });
+
+            document.querySelectorAll('.num-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.num-btn').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    activeNum = btn.dataset.val;
+                });
+            });
+
+            // Step Player Event Bindings
+            const stepSlider = document.getElementById('step-slider');
+            stepSlider.addEventListener('input', (e) => {
+                activeStep = parseInt(e.target.value, 10);
+                analyzeRealtime();
+            });
+
+            document.getElementById('btn-step-prev').addEventListener('click', () => {
+                if (activeStep > 0) {
+                    activeStep--;
+                    analyzeRealtime();
+                }
+            });
+
+            document.getElementById('btn-step-next').addEventListener('click', () => {
+                const totalSteps = WASM ? WASM.get_deduction_log_count() : 0;
+                if (activeStep < totalSteps) {
+                    activeStep++;
+                    analyzeRealtime();
+                }
+            });
+
+            document.getElementById('btn-step-play').addEventListener('click', () => {
+                toggleAutoPlay();
+            });
+
+            document.getElementById('btn-all-on').addEventListener('click', () => {
+                RULE_GROUPS.forEach(g => g.rules.forEach(r => {
+                    ruleEnabled[r.id] = true;
+                    document.getElementById('chk-rule-' + r.id).checked = true;
+                    WASM.set_rule_enabled(r.id, true);
+                }));
+                activeStep = null; // Auto advance to maximum solved step!
+                analyzeRealtime();
+            });
+
+            document.getElementById('btn-all-off').addEventListener('click', () => {
+                RULE_GROUPS.forEach(g => g.rules.forEach(r => {
+                    ruleEnabled[r.id] = false;
+                    document.getElementById('chk-rule-' + r.id).checked = false;
+                    WASM.set_rule_enabled(r.id, false);
+                }));
+                activeStep = null; // Auto advance to maximum solved step!
+                analyzeRealtime();
+            });
+
+            document.getElementById('btn-basic-only').addEventListener('click', () => {
+                RULE_GROUPS.forEach(g => g.rules.forEach(r => {
+                    // Enable all rules up to Score 4 (ID <= 140)
+                    const isScore4OrLower = (r.id <= 140);
+                    ruleEnabled[r.id] = isScore4OrLower;
+                    document.getElementById('chk-rule-' + r.id).checked = isScore4OrLower;
+                    WASM.set_rule_enabled(r.id, isScore4OrLower);
+                }));
+                activeStep = null; // Auto advance to maximum solved step!
+                analyzeRealtime();
+            });
+
+            document.getElementById('btn-clear-bp').addEventListener('click', () => {
+                breakpointRuleId = null;
+                breakpointHitIndices = [];
+                breakpointOccurrenceIndex = 0;
+                activeStep = null;
+                renderRuleTree();
+                analyzeRealtime();
+            });
+
+            const fileInput = document.getElementById('file-input');
+            const btnLoadFile = document.getElementById('btn-load-file');
+            const canvasArea = document.getElementById('canvas-area');
+
+            btnLoadFile.addEventListener('click', () => fileInput.click());
+
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => loadPencilBoxText(evt.target.result);
+                reader.readAsText(file);
+                fileInput.value = '';
+            });
+
+            canvasArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                canvasArea.classList.add('drag-over');
+            });
+
+            canvasArea.addEventListener('dragleave', () => {
+                canvasArea.classList.remove('drag-over');
+            });
+
+            canvasArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                canvasArea.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => loadPencilBoxText(evt.target.result);
+                reader.readAsText(file);
+            });
+
+            document.getElementById('btn-copy-url').addEventListener('click', () => {
+                savePuzzleToStorage();
+                const encoded = cols + 'x' + rows + '_' + clues.map(c => c === -1 ? '.' : c).join('');
+                const url = window.location.origin + window.location.pathname + '?p=' + encoded;
+                navigator.clipboard.writeText(url);
+                alert("URL共有リンクをクリップボードにコピーしました！\n" + url);
+            });
+        }
+    </script>
+</body>
+</html>

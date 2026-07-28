@@ -41,7 +41,9 @@ class LoopCourseGame {
     this.padding = 60; // Border padding in px
 
     this.initDOM();
-    this.startNewGame();
+    if (!this.checkCustomPuzzleLoad()) {
+      this.startNewGame();
+    }
   }
 
   initDOM() {
@@ -62,6 +64,14 @@ class LoopCourseGame {
       loadFileBtn.addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', (e) => this.handleFileUpload(e));
     }
+
+    // Setup Lab return button listeners to guarantee exact puzzle string transfer
+    document.querySelectorAll('a[href="lab.html"], #btn-modal-lab').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.goToLab();
+      });
+    });
 
     // Disable browser context menu on the entire board to allow smooth right-click tool usage
     this.svg.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -666,6 +676,162 @@ class LoopCourseGame {
     }
   }
 
+  goToLab() {
+    const flatClues = [];
+    if (Array.isArray(this.clues)) {
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          const val = (this.clues[r] && this.clues[r][c] !== undefined) ? this.clues[r][c] : null;
+          flatClues.push(val === null || val === undefined ? '.' : val);
+        }
+      }
+    }
+    const encoded = this.cols + 'x' + this.rows + '_' + flatClues.join('');
+    localStorage.setItem('lab_custom_puzzle', JSON.stringify({
+      rows: this.rows,
+      cols: this.cols,
+      clues: flatClues.map(c => c === '.' ? -1 : parseInt(c, 10)),
+      time: Date.now()
+    }));
+    window.location.href = 'lab.html?p=' + encoded;
+  }
+
+  checkCustomPuzzleLoad() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const pParam = urlParams.get('p');
+
+    // 1. First priority: Direct URL Query Parameter (e.g. ?p=5x5_..2.11.1.1..3....12...2.1.)
+    if (pParam && pParam.includes('_')) {
+      try {
+        const [dim, str] = pParam.split('_');
+        const [cols, rows] = dim.split('x').map(Number);
+        if (rows && cols && str && str.length >= rows * cols) {
+          const clues2D = [];
+          for (let r = 0; r < rows; r++) {
+            const rowArr = [];
+            for (let c = 0; c < cols; c++) {
+              const char = str[r * cols + c];
+              rowArr.push(char === '.' || char === '-' ? null : parseInt(char, 10));
+            }
+            clues2D.push(rowArr);
+          }
+
+          const selectEl = document.getElementById('select-size');
+          if (selectEl) {
+            const targetVal = cols + 'x' + rows;
+            let hasOpt = false;
+            for (let opt of selectEl.options) {
+              if (opt.value === targetVal) { hasOpt = true; break; }
+            }
+            if (!hasOpt) {
+              const newOpt = document.createElement('option');
+              newOpt.value = targetVal;
+              newOpt.textContent = `カスタム ${cols} x ${rows}`;
+              selectEl.appendChild(newOpt);
+            }
+            selectEl.value = targetVal;
+          }
+
+          const numEdges = (rows + 1) * cols + rows * (cols + 1);
+          let solution = new Int8Array(numEdges);
+
+          if (window.wasmModule && typeof window.wasmModule._solve_puzzle_wasm === 'function') {
+            window.wasmModule._init_grid(rows, cols);
+            const cluesPtr = window.wasmModule._get_clues_ptr();
+            const wasmCluesData = window.wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + rows * cols);
+            for (let r = 0; r < rows; r++) {
+              for (let c = 0; c < cols; c++) {
+                wasmCluesData[r * cols + c] = clues2D[r][c] === null ? -1 : clues2D[r][c];
+              }
+            }
+            const foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
+            if (foundCount > 0) {
+              const solPtr = window.wasmModule._get_solution_ptr(0);
+              solution = new Int8Array(window.wasmModule.HEAP8.subarray(solPtr, solPtr + numEdges));
+            }
+          }
+
+          this.loadCustomGame(rows, cols, clues2D, solution);
+          return true;
+        }
+      } catch (e) {
+        console.error("Failed to parse URL query puzzle:", e);
+      }
+    }
+
+    // 2. Second priority: localStorage backup
+    const explicitCustom = urlParams.has('play');
+    const stored = localStorage.getItem('lab_custom_puzzle');
+
+    if (!stored && !explicitCustom) return false;
+
+    try {
+      if (!stored) return false;
+      const data = JSON.parse(stored);
+      if (data && data.rows && data.cols && Array.isArray(data.clues)) {
+        const rows = data.rows;
+        const cols = data.cols;
+        const flatClues = data.clues;
+        const hasNumbers = flatClues.some(c => c !== -1 && c !== null && c !== undefined);
+
+        if (!explicitCustom && !hasNumbers) {
+          return false;
+        }
+
+        const clues2D = [];
+        for (let r = 0; r < rows; r++) {
+          const rowArr = [];
+          for (let c = 0; c < cols; c++) {
+            const val = flatClues[r * cols + c];
+            rowArr.push(val === -1 ? null : val);
+          }
+          clues2D.push(rowArr);
+        }
+
+        const selectEl = document.getElementById('select-size');
+        if (selectEl) {
+          const targetVal = cols + 'x' + rows;
+          let hasOpt = false;
+          for (let opt of selectEl.options) {
+            if (opt.value === targetVal) { hasOpt = true; break; }
+          }
+          if (!hasOpt) {
+            const newOpt = document.createElement('option');
+            newOpt.value = targetVal;
+            newOpt.textContent = `カスタム ${cols} x ${rows}`;
+            selectEl.appendChild(newOpt);
+          }
+          selectEl.value = targetVal;
+        }
+
+        const numEdges = (rows + 1) * cols + rows * (cols + 1);
+        let solution = new Int8Array(numEdges);
+
+        if (window.wasmModule && typeof window.wasmModule._solve_puzzle_wasm === 'function') {
+          window.wasmModule._init_grid(rows, cols);
+          const cluesPtr = window.wasmModule._get_clues_ptr();
+          const wasmCluesData = window.wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + rows * cols);
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              wasmCluesData[r * cols + c] = clues2D[r][c] === null ? -1 : clues2D[r][c];
+            }
+          }
+          const foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
+          if (foundCount > 0) {
+            const solPtr = window.wasmModule._get_solution_ptr(0);
+            solution = new Int8Array(window.wasmModule.HEAP8.subarray(solPtr, solPtr + numEdges));
+          }
+        }
+
+        this.loadCustomGame(rows, cols, clues2D, solution);
+        return true;
+      }
+    } catch (err) {
+      console.error("Failed to load custom puzzle from storage:", err);
+    }
+    return false;
+  }
+
   loadCustomGame(rows, cols, clues, solution, initialEdgeStates = null) {
     this.gameCompleted = false;
     this.resetHintFailedState();
@@ -705,7 +871,7 @@ class LoopCourseGame {
     this.startTimer();
     this.scheduleAutoColoring();
 
-    this.statusTextEl.innerHTML = 'ファイルからパズルを読み込みました！';
+    this.statusTextEl.innerHTML = 'パズル開始！線を引いて輪をつくりましょう';
     this.statusTextEl.classList.remove('loading');
 
     // Automatically apply 3x3 LUT deductions from WASM solver
@@ -929,6 +1095,10 @@ class LoopCourseGame {
   }
 
   startNewGame() {
+    localStorage.removeItem('lab_custom_puzzle');
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
     this.gameCompleted = false;
     this.resetHintFailedState();
     this.hasManuallyAdjusted = false;
@@ -2160,6 +2330,19 @@ class LoopCourseGame {
     // Display victory modal
     document.getElementById('modal-time').textContent = this.formatTime(this.secondsElapsed);
     document.getElementById('victory-modal').classList.add('active');
+  }
+
+  replayCurrentPuzzle() {
+    document.getElementById('victory-modal').classList.remove('active');
+    this.gameCompleted = false;
+    this.edgeStates.fill(0);
+    this.cellStates.fill(0);
+    this.undoStack = [];
+    this.redoStack = [];
+    this.renderBoard();
+    this.resetTimer();
+    this.startTimer();
+    this.statusTextEl.textContent = 'ゲーム再スタート！';
   }
 
   // Timer Management

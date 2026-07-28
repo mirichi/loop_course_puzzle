@@ -55,6 +55,7 @@
           </div>
 
           <button id="btn-new-game" class="primary-btn ripple">新規パズルを生成</button>
+          <a href="lab.html" class="secondary-btn ripple" style="margin-top: 10px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; width: 100%;">⚡ リアルタイム解析ラボ (作問スタジオ)</a>
           <button id="btn-load-file" class="secondary-btn ripple" style="margin-top: 10px;">PencilBox形式を読み込む
             (.txt)</button>
           <input type="file" id="file-input" style="display: none;" accept=".txt">
@@ -187,7 +188,10 @@
           </div>
         </div>
 
-        <button id="btn-modal-new-game" class="primary-btn ripple" onclick="window.game.startNewGame()">もう一度遊ぶ</button>
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px; width: 100%;">
+          <button id="btn-modal-new-game" class="primary-btn ripple" style="font-size: 1.1rem; padding: 14px;" onclick="window.game.startNewGame()">🎲 ランダム新問題を生成</button>
+          <a id="btn-modal-lab" href="lab.html" class="secondary-btn ripple" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center; width: 100%;">⚡ ラボに戻って編集する</a>
+        </div>
       </div>
     </div>
   </div>

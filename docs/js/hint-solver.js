@@ -507,6 +507,183 @@ class LoopCourseHintSolver {
     return hints;
   }
 
+  // --- RULE: マス数字を経由する仮想パスループ防止定石 (Virtual Path Loop Prevention through Clues) ---
+  checkVirtualPathClueLoopPrevention() {
+    const hints = [];
+
+    const parent = new Int32Array(this.numDots);
+    for (let i = 0; i < this.numDots; i++) parent[i] = i;
+    const find = (i) => {
+      let root = i;
+      while (root !== parent[root]) root = parent[root];
+      let curr = i;
+      while (curr !== root) {
+        let nxt = parent[curr];
+        parent[curr] = root;
+        curr = nxt;
+      }
+      return root;
+    };
+    const union = (i, j) => {
+      const rootI = find(i);
+      const rootJ = find(j);
+      if (rootI !== rootJ) parent[rootI] = rootJ;
+    };
+
+    const dotDegree = new Int32Array(this.numDots);
+    for (let e = 0; e < this.numEdges; e++) {
+      if (this.edgeStates[e] === 1) {
+        const [dA, dB] = this.getEdgeDots(e);
+        dotDegree[dA]++;
+        dotDegree[dB]++;
+        union(dA, dB);
+      }
+    }
+
+    const traceForcedPath = (dot) => {
+      let curr = dot;
+      let visitedDots = new Set([curr]);
+      for (let step = 0; step < 10; step++) {
+        let nextDot = -1;
+        const r = Math.floor(curr / (this.cols + 1));
+        const c = curr % (this.cols + 1);
+
+        const edges = [
+          r > 0 ? this.getVEdgeIndex(r - 1, c) : -1,
+          c < this.cols ? this.getHEdgeIndex(r, c) : -1,
+          r < this.rows ? this.getVEdgeIndex(r, c) : -1,
+          c > 0 ? this.getHEdgeIndex(r, c - 1) : -1
+        ];
+
+        let lineCount = 0, crossCount = 0, undecidedEdge = -1, lineEdge = -1;
+        for (let e of edges) {
+          if (e === -1 || this.edgeStates[e] === -1) crossCount++;
+          else if (this.edgeStates[e] === 1) { lineCount++; lineEdge = e; }
+          else undecidedEdge = e;
+        }
+
+        if (lineCount === 1) {
+          const [dA, dB] = this.getEdgeDots(lineEdge);
+          const nxt = dA === curr ? dB : dA;
+          if (!visitedDots.has(nxt)) nextDot = nxt;
+        } else if (crossCount === 3 && undecidedEdge !== -1) {
+          const [dA, dB] = this.getEdgeDots(undecidedEdge);
+          const nxt = dA === curr ? dB : dA;
+          if (!visitedDots.has(nxt)) nextDot = nxt;
+        }
+
+        if (nextDot !== -1) {
+          curr = nextDot;
+          visitedDots.add(curr);
+        } else break;
+      }
+      return curr;
+    };
+
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.clues[r][c] !== 2) continue;
+
+        const dotTL = r * (this.cols + 1) + c;
+        const dotTR = r * (this.cols + 1) + (c + 1);
+        const dotBL = (r + 1) * (this.cols + 1) + c;
+        const dotBR = (r + 1) * (this.cols + 1) + (c + 1);
+
+        const eTop = this.getHEdgeIndex(r, c);
+        const eBottom = this.getHEdgeIndex(r + 1, c);
+        const eLeft = this.getVEdgeIndex(r, c);
+        const eRight = this.getVEdgeIndex(r, c + 1);
+
+        const cellEdges = [eTop, eRight, eBottom, eLeft];
+        let lineCount = 0, crossCount = 0;
+        for (let e of cellEdges) {
+          if (this.edgeStates[e] === 1) lineCount++;
+          else if (this.edgeStates[e] === -1) crossCount++;
+        }
+
+        if (lineCount === 0) {
+          const testExtEdges = (entryCornerDot, oppositeCornerDot, extEdges, isBlocked) => {
+            if (!isBlocked) return;
+            const targetComp = find(traceForcedPath(oppositeCornerDot));
+            for (let ext of extEdges) {
+              if (ext !== -1 && this.edgeStates[ext] === 0) {
+                const [dA, dB] = this.getEdgeDots(ext);
+                const outerDot = (dA === entryCornerDot) ? dB : dA;
+                if (find(traceForcedPath(outerDot)) === targetComp) {
+                  hints.push({
+                    edgeIdx: ext,
+                    state: -1,
+                    reason: `この辺に線を引くと、隣接する2のマスを経由して既設の線と短絡し、小さなループが作られてしまうため×印になります。`
+                  });
+                }
+              }
+            }
+          };
+
+          const extBL = [c > 0 ? this.getHEdgeIndex(r + 1, c - 1) : -1, r < this.rows - 1 ? this.getVEdgeIndex(r + 1, c) : -1];
+          const extTR = [c < this.cols - 1 ? this.getHEdgeIndex(r, c + 1) : -1, r > 0 ? this.getVEdgeIndex(r - 1, c + 1) : -1];
+          const extTL = [c > 0 ? this.getHEdgeIndex(r, c - 1) : -1, r > 0 ? this.getVEdgeIndex(r - 1, c) : -1];
+          const extBR = [c < this.cols - 1 ? this.getHEdgeIndex(r + 1, c + 1) : -1, r < this.rows - 1 ? this.getVEdgeIndex(r + 1, c + 1) : -1];
+
+          testExtEdges(dotBL, dotTR, extBL, this.edgeStates[eLeft] === -1 || this.edgeStates[eBottom] === -1 || this.edgeStates[eRight] === -1);
+          testExtEdges(dotTR, dotBL, extTR, this.edgeStates[eLeft] === -1 || this.edgeStates[eTop] === -1 || this.edgeStates[eRight] === -1);
+          testExtEdges(dotTL, dotBR, extTL, this.edgeStates[eLeft] === -1 || this.edgeStates[eTop] === -1 || this.edgeStates[eBottom] === -1);
+          testExtEdges(dotBR, dotTL, extBR, this.edgeStates[eRight] === -1 || this.edgeStates[eBottom] === -1 || this.edgeStates[eTop] === -1);
+        }
+
+        if (lineCount === 1) {
+          for (let i = 0; i < 4; i++) {
+            const eDrawn = cellEdges[i];
+            if (this.edgeStates[eDrawn] !== 1) continue;
+
+            const eAdj1 = cellEdges[(i + 3) % 4];
+            const eAdj2 = cellEdges[(i + 1) % 4];
+
+            const checkEdgeCandidate = (targetUndecidedEdge, newCornerDot, sameLineOpponentDot) => {
+              if (targetUndecidedEdge !== -1 && this.edgeStates[targetUndecidedEdge] === 0) {
+                const tNew = find(traceForcedPath(newCornerDot));
+                const tOpp = find(traceForcedPath(sameLineOpponentDot));
+                if (tNew === tOpp) {
+                  hints.push({
+                    edgeIdx: targetUndecidedEdge,
+                    state: -1,
+                    reason: `この辺に線を引くと、隣接する2のマスを経由して既設の線と短絡し、小さなループが作られてしまうため×印になります。`
+                  });
+                }
+              }
+            };
+
+            if (this.edgeStates[eAdj1] === -1) {
+              const [d1, d2] = this.getEdgeDots(eDrawn);
+              const [a1, a2] = this.getEdgeDots(eAdj2);
+              let sharedDot = -1, otherDrawnDot = -1, otherAdjDot = -1;
+              if (d1 === a1) { sharedDot = d1; otherDrawnDot = d2; otherAdjDot = a2; }
+              else if (d1 === a2) { sharedDot = d1; otherDrawnDot = d2; otherAdjDot = a1; }
+              else if (d2 === a1) { sharedDot = d2; otherDrawnDot = d1; otherAdjDot = a2; }
+              else if (d2 === a2) { sharedDot = d2; otherDrawnDot = d1; otherAdjDot = a1; }
+
+              checkEdgeCandidate(eAdj2, otherAdjDot, otherDrawnDot);
+            }
+
+            // If eAdj2 is cross, test eAdj1
+            if (this.edgeStates[eAdj2] === -1) {
+              const [d1, d2] = this.getEdgeDots(eDrawn);
+              const [a1, a2] = this.getEdgeDots(eAdj1);
+              let sharedDot = -1, otherDrawnDot = -1, otherAdjDot = -1;
+              if (d1 === a1) { sharedDot = d1; otherDrawnDot = d2; otherAdjDot = a2; }
+              else if (d1 === a2) { sharedDot = d1; otherDrawnDot = d2; otherAdjDot = a1; }
+              else if (d2 === a1) { sharedDot = d2; otherDrawnDot = d1; otherAdjDot = a2; }
+              else if (d2 === a2) { sharedDot = d2; otherDrawnDot = d1; otherAdjDot = a1; }
+
+              checkEdgeCandidate(eAdj1, otherAdjDot, otherDrawnDot);
+            }
+          }
+        }
+      }
+    }
+    return hints;
+  }
+
   // --- RULE 14: 3の角の外側にxが2つある場合の定石 (3 Corner Outside Crosses) ---
   check3CornerOutsideCrosses() {
     const hints = [];
@@ -643,16 +820,16 @@ class LoopCourseHintSolver {
             const opp = corners[base.oppositeId];
             const oppOut0 = opp.outside[0];
             const oppOut1 = opp.outside[1];
-            const s0 = oppOut0 === -1 ? -1 : this.edgeStates[oppOut0];
-            const s1 = oppOut1 === -1 ? -1 : this.edgeStates[oppOut1];
+            const isCrossOpp0 = isCross(oppOut0);
+            const isCrossOpp1 = isCross(oppOut1);
 
-            if (s0 === -1 && s1 === 0 && oppOut1 !== -1) {
+            if (isCrossOpp0 && oppOut1 !== -1 && this.edgeStates[oppOut1] === 0) {
               hints.push({
                 edgeIdx: oppOut1,
                 state: -1,
                 reason: `2のマスの${base.name}の角の外側に×が2つあり、対角の${opp.name}の角の外側も片方が×になっているため、もう一方の辺は×になります。`
               });
-            } else if (s1 === -1 && s0 === 0 && oppOut0 !== -1) {
+            } else if (isCrossOpp1 && oppOut0 !== -1 && this.edgeStates[oppOut0] === 0) {
               hints.push({
                 edgeIdx: oppOut0,
                 state: -1,
@@ -665,17 +842,17 @@ class LoopCourseHintSolver {
               const adj = corners[adjId];
               const adjOut0 = adj.outside[0];
               const adjOut1 = adj.outside[1];
-              const a0 = adjOut0 === -1 ? -1 : this.edgeStates[adjOut0];
-              const a1 = adjOut1 === -1 ? -1 : this.edgeStates[adjOut1];
+              const isCrossAdj0 = isCross(adjOut0);
+              const isCrossAdj1 = isCross(adjOut1);
 
-              // Line deductions (when one outside edge is cross)
-              if (a0 === -1 && a1 === 0 && adjOut1 !== -1) {
+              // Line deductions (when one outside edge is cross / out of bounds)
+              if (isCrossAdj0 && adjOut1 !== -1 && this.edgeStates[adjOut1] === 0) {
                 hints.push({
                   edgeIdx: adjOut1,
                   state: 1,
                   reason: `2のマスの${base.name}の角の外側に×が2つあり、隣の${adj.name}の角の外側の片方が×になっているため、もう一方の辺には必ず線が入ります。`
                 });
-              } else if (a1 === -1 && a0 === 0 && adjOut0 !== -1) {
+              } else if (isCrossAdj1 && adjOut0 !== -1 && this.edgeStates[adjOut0] === 0) {
                 hints.push({
                   edgeIdx: adjOut0,
                   state: 1,
@@ -684,13 +861,15 @@ class LoopCourseHintSolver {
               }
 
               // Cross deductions (when one outside edge is line)
-              if (a0 === 1 && a1 === 0 && adjOut1 !== -1) {
+              const isLineAdj0 = (adjOut0 !== -1 && this.edgeStates[adjOut0] === 1);
+              const isLineAdj1 = (adjOut1 !== -1 && this.edgeStates[adjOut1] === 1);
+              if (isLineAdj0 && adjOut1 !== -1 && this.edgeStates[adjOut1] === 0) {
                 hints.push({
                   edgeIdx: adjOut1,
                   state: -1,
                   reason: `2のマスの${base.name}の角の外側に×が2つあり、隣の${adj.name}の角に外から線が入ってきたため、もう一方の辺は×になります。`
                 });
-              } else if (a1 === 1 && a0 === 0 && adjOut0 !== -1) {
+              } else if (isLineAdj1 && adjOut0 !== -1 && this.edgeStates[adjOut0] === 0) {
                 hints.push({
                   edgeIdx: adjOut0,
                   state: -1,
@@ -2654,7 +2833,8 @@ class LoopCourseHintSolver {
       () => solver.checkDotConstraints(),
       () => solver.checkPrematureLoops(),
       () => solver.checkAdjacent3sWith2(),
-      () => solver.checkDiagonal2OppositeExternalLines()
+      () => solver.checkDiagonal2OppositeExternalLines(),
+      () => solver.checkVirtualPathClueLoopPrevention()
     ];
 
     for (const rule of crossRules) {

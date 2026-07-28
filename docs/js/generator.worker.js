@@ -2,7 +2,7 @@
 // Prevents UI thread blocking and browser freeze dialogs.
 
 // Import dependencies using absolute or relative paths with cache-busters
-const wasmVersion = '20260727_v1';
+const wasmVersion = '20260728_v10';
 importScripts(`loopcourse.js?v=${wasmVersion}`, `solver.js?v=${wasmVersion}`, `generator.js?v=${wasmVersion}`);
 
 self.onmessage = function(e) {

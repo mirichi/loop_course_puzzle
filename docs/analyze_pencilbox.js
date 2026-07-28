@@ -105,11 +105,12 @@ async function main() {
     const ptr = get_deduction_logs_ptr();
 
     let HEAP32 = new Int32Array(Module.HEAP8.buffer);
-    let csvData = "Step,EdgeIdx,RuleID,Difficulty,RuleName,LookaheadDepth\n";
+    let csvData = "Step,EdgeIdx,RuleID,Difficulty,RuleName,LookaheadDepth,State\n";
     for (let i = 0; i < count; i++) {
-        let edgeIdx = HEAP32[(ptr >> 2) + i * 3 + 0];
-        let ruleId = HEAP32[(ptr >> 2) + i * 3 + 1];
-        let depth = HEAP32[(ptr >> 2) + i * 3 + 2];
+        let edgeIdx = HEAP32[(ptr >> 2) + i * 4 + 0];
+        let ruleId = HEAP32[(ptr >> 2) + i * 4 + 1];
+        let depth = HEAP32[(ptr >> 2) + i * 4 + 2];
+        let state = HEAP32[(ptr >> 2) + i * 4 + 3];
         let ruleName = get_ac3_rule_name(ruleId);
 
         let diff = -1;
@@ -127,7 +128,7 @@ async function main() {
         else diff = ruleId;
 
         // step is just i+1 since we don't store it in the struct
-        csvData += `${i + 1},${edgeIdx},${ruleId},${diff},"${ruleName}",${depth}\n`;
+        csvData += `${i + 1},${edgeIdx},${ruleId},${diff},"${ruleName}",${depth},${state}\n`;
     }
 
     const outCsv = `${fileName}_deduction.csv`;
