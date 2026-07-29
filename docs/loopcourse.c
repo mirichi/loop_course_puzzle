@@ -2642,7 +2642,7 @@ static bool applyVirtualPathLogic() {
                         
                         if (!solved1 && !solved2) {
                             if (!setEdgeState(k, -1)) return false;
-                            changed = true;
+                            if (edgeStates[k] == -1) changed = true;
                         }
                     }
                 }
@@ -4251,17 +4251,22 @@ RECORD_AC3_TIME(115);
         }
         
         if (ac3_current_difficulty_limit >= DIFF_MEDIUM) {
-            RECORD_AC3_TIME(143);
-            if (!applyVirtualPathLogic()) AC3_RETURN_FALSE;
+            if (IS_RULE_ENABLED(143)) {
+                RECORD_AC3_TIME(143);
+                if (!applyVirtualPathLogic()) AC3_RETURN_FALSE;
+            }
         }
 
         if (ac3_current_difficulty_limit >= DIFF_HARD) {
-            RECORD_AC3_TIME(133);
-            if (!applyAdvanced2Rules()) AC3_RETURN_FALSE;
+            if (IS_RULE_ENABLED(133)) {
+                RECORD_AC3_TIME(133);
+                if (!applyAdvanced2Rules()) AC3_RETURN_FALSE;
+            }
             
-            RECORD_AC3_TIME(132);
-            for (int r = 0; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
+            if (IS_RULE_ENABLED(132)) {
+                RECORD_AC3_TIME(132);
+                for (int r = 0; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
                     if (clues[r * cols + c] == 2) {
                         int tl_v = getVEdgeIndex(r - 1, c);
                         int tl_h = getHEdgeIndex(r, c - 1);
@@ -4308,13 +4313,15 @@ RECORD_AC3_TIME(115);
                     }
                 }
             }
+            }
         }
         
         bool cycleChanged = false;
         if (ac3_current_difficulty_limit >= DIFF_GLOBAL_2) {
-            RECORD_AC3_TIME(141);
-            for (int i = 0; i < numEdges; i++) {
-            if (edgeStates[i] == 0) {
+            if (IS_RULE_ENABLED(141)) {
+                RECORD_AC3_TIME(141);
+                for (int i = 0; i < numEdges; i++) {
+                if (edgeStates[i] == 0) {
                 int dotA, dotB;
                 if (i < numH) {
                     int rr = i / cols;
@@ -4337,22 +4344,30 @@ RECORD_AC3_TIME(115);
                         if (edgeStates[i] == -1) cycleChanged = true;
                     }
                 }
+                }
+                }
             }
-        }
         }
         
         if (cellStackTop == 0 && dotStackTop == 0 && !cycleChanged) {
             // Only when absolutely everything is exhausted, run the O(V+E) Bridge Detection
-            if (ac3_current_difficulty_limit >=DIFF_GLOBAL_3) { RECORD_AC3_TIME(152); if (!runUniversalParityCheck()) AC3_RETURN_FALSE; }
+            if (ac3_current_difficulty_limit >=DIFF_GLOBAL_3) { 
+                if (IS_RULE_ENABLED(152)) {
+                    RECORD_AC3_TIME(152); 
+                    if (!runUniversalParityCheck()) AC3_RETURN_FALSE; 
+                }
+            }
             
             if (ac3_current_difficulty_limit >=DIFF_EXTREME && !isDoingLookahead && !restrictLogicToLocal) {
                 int edges_before = 0;
                 for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
                 
-                RECORD_AC3_TIME(161);
-                if (!applyLUT()) AC3_RETURN_FALSE;
-                RECORD_AC3_TIME(161);
-                if (!applyBoundaryLUTs()) AC3_RETURN_FALSE;
+                if (IS_RULE_ENABLED(161)) {
+                    RECORD_AC3_TIME(161);
+                    if (!applyLUT()) AC3_RETURN_FALSE;
+                    RECORD_AC3_TIME(161);
+                    if (!applyBoundaryLUTs()) AC3_RETURN_FALSE;
+                }
                 
                 int edges_after = 0;
                 for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_after++;

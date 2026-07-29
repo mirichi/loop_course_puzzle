@@ -207,6 +207,18 @@ class LoopCourseGame {
       }
     });
 
+    // Paste event listener for loading pzprv3 URLs
+    window.addEventListener('paste', (e) => {
+      const pasteData = e.clipboardData || window.clipboardData;
+      if (!pasteData) return;
+      const pastedText = pasteData.getData('text');
+      if (pastedText && (pastedText.includes('pzv.jp') || pastedText.includes('puzz.link') || pastedText.match(/slither\/\d+\/\d+\//))) {
+        if (this.tryLoadPzprUrl(pastedText)) {
+          console.log("Successfully loaded puzzle from pasted URL.");
+        }
+      }
+    });
+
     // Initialize custom board pan and zoom
     this.initPanZoom();
   }
@@ -694,6 +706,83 @@ class LoopCourseGame {
       time: Date.now()
     }));
     window.location.href = 'lab.html?p=' + encoded;
+  }
+
+  tryLoadPzprUrl(urlStr) {
+    const match = urlStr.match(/slither\/(\d+)\/(\d+)\/([0-9a-z]+)/);
+    if (!match) return false;
+    const cols = parseInt(match[1], 10);
+    const rows = parseInt(match[2], 10);
+    const bstr = match[3];
+
+    let c = 0;
+    const flatClues = new Array(rows * cols).fill(null);
+    let i = 0;
+    
+    while (i < bstr.length && c < rows * cols) {
+      const ca = bstr.charAt(i);
+      
+      if (ca >= '0' && ca <= '4') {
+        flatClues[c] = parseInt(ca, 16);
+        c++;
+      } else if (ca >= '5' && ca <= '9') {
+        flatClues[c] = parseInt(ca, 16) - 5;
+        c += 2;
+      } else if (ca >= 'a' && ca <= 'e') {
+        flatClues[c] = parseInt(ca, 16) - 10;
+        c += 3;
+      } else if (ca >= 'g' && ca <= 'z') {
+        c += parseInt(ca, 36) - 15;
+      }
+      i++;
+    }
+
+    const clues2D = [];
+    for (let r = 0; r < rows; r++) {
+      const rowArr = [];
+      for (let col = 0; col < cols; col++) {
+        rowArr.push(flatClues[r * cols + col]);
+      }
+      clues2D.push(rowArr);
+    }
+
+    const selectEl = document.getElementById('select-size');
+    if (selectEl) {
+      const targetVal = cols + 'x' + rows;
+      let hasOpt = false;
+      for (let opt of selectEl.options) {
+        if (opt.value === targetVal) { hasOpt = true; break; }
+      }
+      if (!hasOpt) {
+        const newOpt = document.createElement('option');
+        newOpt.value = targetVal;
+        newOpt.textContent = `カスタム ${cols} x ${rows}`;
+        selectEl.appendChild(newOpt);
+      }
+      selectEl.value = targetVal;
+    }
+
+    const numEdges = (rows + 1) * cols + rows * (cols + 1);
+    let solution = new Int8Array(numEdges);
+
+    if (window.wasmModule && typeof window.wasmModule._solve_puzzle_wasm === 'function') {
+      window.wasmModule._init_grid(rows, cols);
+      const cluesPtr = window.wasmModule._get_clues_ptr();
+      const wasmCluesData = window.wasmModule.HEAP8.subarray(cluesPtr, cluesPtr + rows * cols);
+      for (let r = 0; r < rows; r++) {
+        for (let col = 0; col < cols; col++) {
+          wasmCluesData[r * cols + col] = clues2D[r][col] === null ? -1 : clues2D[r][col];
+        }
+      }
+      const foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
+      if (foundCount > 0) {
+        const solPtr = window.wasmModule._get_solution_ptr(0);
+        solution = new Int8Array(window.wasmModule.HEAP8.subarray(solPtr, solPtr + numEdges));
+      }
+    }
+
+    this.loadCustomGame(rows, cols, clues2D, solution);
+    return true;
   }
 
   checkCustomPuzzleLoad() {
