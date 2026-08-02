@@ -738,12 +738,12 @@ static inline bool applyLutEdge(int edgeIdx, int8_t state, bool* deduced) {
         if (((fl) >> (bit)) & 1) { \
             bool d = false; \
             if (!applyLutEdge(edgeIdx, 1, &d)) return false; \
-            if (d && enable_deduction_logging) return true; \
+            if (d) return true; \
         } \
         if (!(((fc) >> (bit)) & 1)) { \
             bool d = false; \
             if (!applyLutEdge(edgeIdx, -1, &d)) return false; \
-            if (d && enable_deduction_logging) return true; \
+            if (d) return true; \
         } \
     } while(0)
 

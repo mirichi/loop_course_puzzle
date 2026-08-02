@@ -824,6 +824,7 @@ class LoopCourseGame {
           const numEdges = (rows + 1) * cols + rows * (cols + 1);
           let solution = new Int8Array(numEdges);
 
+          let foundCount = 0;
           if (window.wasmModule && typeof window.wasmModule._solve_puzzle_wasm === 'function') {
             window.wasmModule._init_grid(rows, cols);
             const cluesPtr = window.wasmModule._get_clues_ptr();
@@ -833,10 +834,19 @@ class LoopCourseGame {
                 wasmCluesData[r * cols + c] = clues2D[r][c] === null ? -1 : clues2D[r][c];
               }
             }
-            const foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
+            foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
             if (foundCount > 0) {
               const solPtr = window.wasmModule._get_solution_ptr(0);
               solution = new Int8Array(window.wasmModule.HEAP8.subarray(solPtr, solPtr + numEdges));
+            }
+          }
+
+          if (foundCount === 0 && window.LoopCourseSolver) {
+            console.log("Falling back to JS solver for solution");
+            const jsSolver = new window.LoopCourseSolver(rows, cols, clues2D);
+            const jsSolutions = jsSolver.solve(true, 100000);
+            if (jsSolutions.length > 0 && jsSolutions[0] !== "timeout") {
+              solution = jsSolutions[0];
             }
           }
 
@@ -896,6 +906,7 @@ class LoopCourseGame {
         const numEdges = (rows + 1) * cols + rows * (cols + 1);
         let solution = new Int8Array(numEdges);
 
+        let foundCount = 0;
         if (window.wasmModule && typeof window.wasmModule._solve_puzzle_wasm === 'function') {
           window.wasmModule._init_grid(rows, cols);
           const cluesPtr = window.wasmModule._get_clues_ptr();
@@ -905,10 +916,19 @@ class LoopCourseGame {
               wasmCluesData[r * cols + c] = clues2D[r][c] === null ? -1 : clues2D[r][c];
             }
           }
-          const foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
+          foundCount = window.wasmModule._solve_puzzle_wasm(true, 5000000);
           if (foundCount > 0) {
             const solPtr = window.wasmModule._get_solution_ptr(0);
             solution = new Int8Array(window.wasmModule.HEAP8.subarray(solPtr, solPtr + numEdges));
+          }
+        }
+
+        if (foundCount === 0 && window.LoopCourseSolver) {
+          console.log("Falling back to JS solver for solution");
+          const jsSolver = new window.LoopCourseSolver(rows, cols, clues2D);
+          const jsSolutions = jsSolver.solve(true, 100000);
+          if (jsSolutions.length > 0 && jsSolutions[0] !== "timeout") {
+            solution = jsSolutions[0];
           }
         }
 
@@ -1212,7 +1232,7 @@ class LoopCourseGame {
     try {
       // Instantiate background Worker ONCE (Persistent Worker pattern)
       if (!this.generatorWorker) {
-        this.generatorWorker = new Worker(`js/generator.worker.js?v=20260722_v2`);
+        this.generatorWorker = new Worker(`js/generator.worker.js?v=20260802_v3`);
       }
 
       // Set safety timeout to fallback to main-thread if worker crashes/stalls
@@ -2468,5 +2488,26 @@ window.LoopCourseGame = LoopCourseGame;
 
 // Automatically bootstrap game on load
 window.addEventListener('DOMContentLoaded', () => {
-  window.game = new LoopCourseGame();
+  const initGame = () => {
+    window.game = new LoopCourseGame();
+  };
+
+  if (window.wasmReady) {
+    initGame();
+  } else if (typeof createLoopCourseModule === 'function') {
+    // Wait for WASM to initialize (up to ~3 seconds)
+    let attempts = 0;
+    const checkWasm = setInterval(() => {
+      attempts++;
+      if (window.wasmReady || attempts > 60) {
+        clearInterval(checkWasm);
+        if (!window.wasmReady) {
+          console.warn("WASM initialization timed out. Bootstrapping game anyway.");
+        }
+        initGame();
+      }
+    }, 50);
+  } else {
+    initGame();
+  }
 });

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LoopCourse Lab - 紙とペンの作問・手筋解析スタジオ</title>
+    <title>LoopCourse Lab - 手筋解析スタジオ</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&family=Shippori+Mincho:wght@600;800&display=swap" rel="stylesheet">
@@ -656,7 +656,10 @@
                         🔄 点対称ガイド: ON
                     </button>
                     <button id="btn-show-solution" class="btn toggle-btn active" title="ソルバー確定線の描画切替">
-                        ✒️ 解法インク線: ON
+                        ✒️ 解法線: ON
+                    </button>
+                    <button id="btn-auto-fix" class="btn btn-accent" title="現在の配置枠をベースに、数字の値を高速自動調整して一意解の成立するパズルに変換">
+                        ✨ パズル自動成立 (Auto-Fix)
                     </button>
                     <button id="btn-clear" class="btn" title="盤面をクリア">🗑️ クリア</button>
                 </div>
@@ -742,7 +745,7 @@
     </div>
 
     <!-- Load WASM with Cache Buster -->
-    <script src="js/loopcourse.js?v=20260729_v1"></script>
+    <script src="js/loopcourse.js?v=20260802_v3"></script>
     <script>
         const RULE_GROUPS = [
             {
@@ -1611,6 +1614,90 @@
             }
         }
 
+        function autoFixPuzzle() {
+            if (!WASM) return;
+            const btn = document.getElementById('btn-auto-fix');
+            const origText = btn.textContent;
+            btn.textContent = '✨ 探索中...';
+            btn.disabled = true;
+
+            setTimeout(() => {
+                const totalCells = rows * cols;
+                const cluesPtr = WASM.get_clues_ptr();
+
+                let activeIndices = [];
+                for (let i = 0; i < totalCells; i++) {
+                    if (clues[i] !== -1) activeIndices.push(i);
+                }
+
+                const isEmptyBoard = (activeIndices.length === 0);
+                let foundSolution = false;
+                const possibleVals = [0, 1, 2, 3];
+
+                // Fast local mutation search (up to 350 attempts)
+                for (let attempt = 0; attempt < 350; attempt++) {
+                    let candidateClues = [...clues];
+
+                    // If empty initial board, generate a completely new random frame per attempt
+                    if (isEmptyBoard) {
+                        candidateClues.fill(-1);
+                        const numClues = Math.max(4, Math.floor(totalCells * (0.2 + Math.random() * 0.15))); // 20%~35% density
+                        for (let i = 0; i < numClues; i++) {
+                            const r = Math.floor(Math.random() * rows);
+                            const c = Math.floor(Math.random() * cols);
+                            const idx = r * cols + c;
+                            const val = [0, 1, 2, 3][Math.floor(Math.random() * 4)];
+                            candidateClues[idx] = val;
+                            if (isSymmetric) {
+                                const symIdx = (rows - 1 - r) * cols + (cols - 1 - c);
+                                candidateClues[symIdx] = val;
+                            }
+                        }
+                    } else {
+                        // Mutate 1 ~ 3 random active positions
+                        const numMutations = 1 + Math.floor(Math.random() * Math.min(3, activeIndices.length));
+                        for (let m = 0; m < numMutations; m++) {
+                            const targetIdx = activeIndices[Math.floor(Math.random() * activeIndices.length)];
+                            const r = Math.floor(targetIdx / cols);
+                            const c = targetIdx % cols;
+                            const newVal = possibleVals[Math.floor(Math.random() * possibleVals.length)];
+
+                            candidateClues[targetIdx] = newVal;
+                            if (isSymmetric) {
+                                const symIdx = (rows - 1 - r) * cols + (cols - 1 - c);
+                                candidateClues[symIdx] = newVal;
+                            }
+                        }
+                    }
+
+                    // Test candidateClues in WASM
+                    WASM.init_grid(rows, cols);
+                    for (let i = 0; i < totalCells; i++) {
+                        WASM.HEAP8[cluesPtr + i] = candidateClues[i];
+                    }
+
+                    const res = WASM.analyze_puzzle("Master");
+                    if (res === 1) { // 1 = Solvable with unique solution!
+                        clues = candidateClues;
+                        foundSolution = true;
+                        break;
+                    }
+                }
+
+                btn.textContent = origText;
+                btn.disabled = false;
+
+                if (foundSolution) {
+                    activeStep = null;
+                    savePuzzleToStorage();
+                    renderSVGGrid();
+                    analyzeRealtime();
+                } else {
+                    alert("✨ 現在の配置の近傍では一意解の組み合わせが見つかりませんでした。\nいくつか数字を減らすか配置を増減して再試行してください。");
+                }
+            }, 20);
+        }
+
         function setupEvents() {
             window.addEventListener('keydown', (e) => {
                 if (!hoveredCell) return;
@@ -1662,6 +1749,10 @@
                 btnShowSol.classList.toggle('active', showSolution);
                 btnShowSol.textContent = '✒️ 解法インク線: ' + (showSolution ? 'ON' : 'OFF');
                 renderEdgeSolution();
+            });
+
+            document.getElementById('btn-auto-fix').addEventListener('click', () => {
+                autoFixPuzzle();
             });
 
             document.getElementById('btn-clear').addEventListener('click', () => {

@@ -881,7 +881,10 @@ static inline bool deductLightweight(int startEdge, int8_t startState, bool loop
             
             for (int j = 0; j < dEdgesCount; j++) {
                 int de = dEdges[j];
-                if (de == numEdges) continue;
+                if (de < 0 || de >= numEdges) {
+                    crosses++;
+                    continue;
+                }
                 if (edgeStates[de] == 1) lines++;
                 else if (edgeStates[de] == -1) crosses++;
                 else undecided[undecidedCount++] = de;
@@ -1521,6 +1524,7 @@ static bool batchUpdateGlobalGF2() {
                 int state = (global_gf2_constants[r] == 1) ? 1 : -1;
                 if (edgeStates[p] == 0) {
                     if (!setEdgeState(p, state)) return false;
+                    return true;
                 } else if (edgeStates[p] != state) {
                     return false;
                 }
@@ -2306,26 +2310,22 @@ static bool applyVirtualPathLogic() {
                     int eT = edges[0], eB = edges[1], eL = edges[2], eR = edges[3];
                     if (edgeStates[eL] == -1 || edgeStates[eB] == -1 || edgeStates[eR] == -1) {
                         int extBL_V = (r < rows - 1) ? getVEdgeIndex(r + 1, c) : -1;
-                        if (extBL_V != -1 && edgeStates[extBL_V] == 0) {
-                            if (!setEdgeState(extBL_V, -1)) return false;
-                            changed = true;
-                        }
                         int extBL_H = (c > 0) ? getHEdgeIndex(r + 1, c - 1) : -1;
-                        if (extBL_H != -1 && edgeStates[extBL_H] == 0) {
-                            if (!setEdgeState(extBL_H, -1)) return false;
-                            changed = true;
+                        if (extBL_H != -1 && edgeStates[extBL_H] == 1) {
+                            if (extBL_V != -1) { if (!setEdgeState(extBL_V, -1)) return false; changed = true; }
+                        }
+                        if (extBL_V != -1 && edgeStates[extBL_V] == 1) {
+                            if (extBL_H != -1) { if (!setEdgeState(extBL_H, -1)) return false; changed = true; }
                         }
                     }
                     if (edgeStates[eL] == -1 || edgeStates[eT] == -1 || edgeStates[eR] == -1) {
                         int extTR_V = (r > 0) ? getVEdgeIndex(r - 1, c + 1) : -1;
-                        if (extTR_V != -1 && edgeStates[extTR_V] == 0) {
-                            if (!setEdgeState(extTR_V, -1)) return false;
-                            changed = true;
-                        }
                         int extTR_H = (c < cols - 1) ? getHEdgeIndex(r, c + 1) : -1;
-                        if (extTR_H != -1 && edgeStates[extTR_H] == 0) {
-                            if (!setEdgeState(extTR_H, -1)) return false;
-                            changed = true;
+                        if (extTR_H != -1 && edgeStates[extTR_H] == 1) {
+                            if (extTR_V != -1) { if (!setEdgeState(extTR_V, -1)) return false; changed = true; }
+                        }
+                        if (extTR_V != -1 && edgeStates[extTR_V] == 1) {
+                            if (extTR_H != -1) { if (!setEdgeState(extTR_H, -1)) return false; changed = true; }
                         }
                     }
                 }
@@ -2335,26 +2335,22 @@ static bool applyVirtualPathLogic() {
                     int eT = edges[0], eB = edges[1], eL = edges[2], eR = edges[3];
                     if (edgeStates[eL] == -1 || edgeStates[eT] == -1 || edgeStates[eB] == -1) {
                         int extTL_V = (r > 0) ? getVEdgeIndex(r - 1, c) : -1;
-                        if (extTL_V != -1 && edgeStates[extTL_V] == 0) {
-                            if (!setEdgeState(extTL_V, -1)) return false;
-                            changed = true;
-                        }
                         int extTL_H = (c > 0) ? getHEdgeIndex(r, c - 1) : -1;
-                        if (extTL_H != -1 && edgeStates[extTL_H] == 0) {
-                            if (!setEdgeState(extTL_H, -1)) return false;
-                            changed = true;
+                        if (extTL_H != -1 && edgeStates[extTL_H] == 1) {
+                            if (extTL_V != -1) { if (!setEdgeState(extTL_V, -1)) return false; changed = true; }
+                        }
+                        if (extTL_V != -1 && edgeStates[extTL_V] == 1) {
+                            if (extTL_H != -1) { if (!setEdgeState(extTL_H, -1)) return false; changed = true; }
                         }
                     }
                     if (edgeStates[eR] == -1 || edgeStates[eB] == -1 || edgeStates[eT] == -1) {
                         int extBR_V = (r < rows - 1) ? getVEdgeIndex(r + 1, c + 1) : -1;
-                        if (extBR_V != -1 && edgeStates[extBR_V] == 0) {
-                            if (!setEdgeState(extBR_V, -1)) return false;
-                            changed = true;
-                        }
                         int extBR_H = (c < cols - 1) ? getHEdgeIndex(r + 1, c + 1) : -1;
-                        if (extBR_H != -1 && edgeStates[extBR_H] == 0) {
-                            if (!setEdgeState(extBR_H, -1)) return false;
-                            changed = true;
+                        if (extBR_H != -1 && edgeStates[extBR_H] == 1) {
+                            if (extBR_V != -1) { if (!setEdgeState(extBR_V, -1)) return false; changed = true; }
+                        }
+                        if (extBR_V != -1 && edgeStates[extBR_V] == 1) {
+                            if (extBR_H != -1) { if (!setEdgeState(extBR_H, -1)) return false; changed = true; }
                         }
                     }
                 }
@@ -3270,6 +3266,7 @@ static bool universalParityDFS(int u, int p, int* out_sum_deg) {
         } else {
             int child_sum_deg = 0;
             if (!universalParityDFS(v, u, &child_sum_deg)) return false;
+            if (ac3_progress_flag) return true;
             
             my_sum_deg += child_sum_deg;
             bridgeLow[u] = min_int(bridgeLow[u], bridgeLow[v]);
@@ -3283,6 +3280,7 @@ static bool universalParityDFS(int u, int p, int* out_sum_deg) {
                     // Odd number of lines cross the cut. 'e' must be a line.
                     if (!setEdgeState(e, 1)) return false;
                 }
+                if (ac3_progress_flag) return true;
             }
         }
     }
@@ -3299,6 +3297,7 @@ static inline bool runUniversalParityCheck() {
         if (!bridgeVisited[i]) {
             int root_sum_deg = 0;
             if (!universalParityDFS(i, -1, &root_sum_deg)) return false;
+            if (ac3_progress_flag) return true;
         }
     }
     return true;
@@ -3423,29 +3422,29 @@ static inline bool deductIncremental_internal() {
                             int extTL1 = getVEdgeIndex(r - 1, c);
                             int extTL2 = getHEdgeIndex(r, c - 1);
                             if (edgeStates[extTL1] == -1 && edgeStates[extTL2] == -1) {
-                                if (edgeStates[eT] == 0 && !setEdgeState(eT, -1)) AC3_RETURN_FALSE;
-                                if (edgeStates[eL] == 0 && !setEdgeState(eL, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE;
                             }
                             // TR corner: external edges = V(r-1,c+1) up, H(r,c+1) right
                             int extTR1 = getVEdgeIndex(r - 1, c + 1);
                             int extTR2 = getHEdgeIndex(r, c + 1);
                             if (edgeStates[extTR1] == -1 && edgeStates[extTR2] == -1) {
-                                if (edgeStates[eT] == 0 && !setEdgeState(eT, -1)) AC3_RETURN_FALSE;
-                                if (edgeStates[eR] == 0 && !setEdgeState(eR, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eT, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE;
                             }
                             // BL corner: external edges = V(r+1,c) down, H(r+1,c-1) left
                             int extBL1 = getVEdgeIndex(r + 1, c);
                             int extBL2 = getHEdgeIndex(r + 1, c - 1);
                             if (edgeStates[extBL1] == -1 && edgeStates[extBL2] == -1) {
-                                if (edgeStates[eB] == 0 && !setEdgeState(eB, -1)) AC3_RETURN_FALSE;
-                                if (edgeStates[eL] == 0 && !setEdgeState(eL, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eL, -1)) AC3_RETURN_FALSE;
                             }
                             // BR corner: external edges = V(r+1,c+1) down, H(r+1,c+1) right
                             int extBR1 = getVEdgeIndex(r + 1, c + 1);
                             int extBR2 = getHEdgeIndex(r + 1, c + 1);
                             if (edgeStates[extBR1] == -1 && edgeStates[extBR2] == -1) {
-                                if (edgeStates[eB] == 0 && !setEdgeState(eB, -1)) AC3_RETURN_FALSE;
-                                if (edgeStates[eR] == 0 && !setEdgeState(eR, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eB, -1)) AC3_RETURN_FALSE;
+                                if (!setEdgeState(eR, -1)) AC3_RETURN_FALSE;
                             }
                         }
                         
@@ -3801,36 +3800,62 @@ RECORD_AC3_TIME(115);
 
                             RECORD_AC3_TIME(139);
                             // Rule: Diagonal 2 with Opposite External Lines
-                            // Diagonal pair 1: TL (r, c) & BR (r+1, c+1)
-                            int outTL_H = (c > 0) ? getHEdgeIndex(r, c - 1) : -1;
-                            int outTL_V = (r > 0) ? getVEdgeIndex(r - 1, c) : -1;
-                            int outBR_H2 = (c < cols - 1) ? getHEdgeIndex(r + 1, c + 1) : -1;
-                            int outBR_V2 = (r < rows - 1) ? getVEdgeIndex(r + 1, c + 1) : -1;
+                            // Diagonal pair 1: TL (r, c) & BR of the end of the diagonal chain
+                            if (getClue(r - 1, c - 1) != 2) {
+                                int end_r = r, end_c = c;
+                                while (getClue(end_r + 1, end_c + 1) == 2) { end_r++; end_c++; }
+                                
+                                int outTL_H = (c > 0) ? getHEdgeIndex(r, c - 1) : -1;
+                                int outTL_V = (r > 0) ? getVEdgeIndex(r - 1, c) : -1;
+                                int outBR_H2 = (end_c < cols - 1) ? getHEdgeIndex(end_r + 1, end_c + 1) : -1;
+                                int outBR_V2 = (end_r < rows - 1) ? getVEdgeIndex(end_r + 1, end_c + 1) : -1;
 
-                            bool tlHasLine = (outTL_H != -1 && edgeStates[outTL_H] == 1) || (outTL_V != -1 && edgeStates[outTL_V] == 1);
-                            bool brHasLine = (outBR_H2 != -1 && edgeStates[outBR_H2] == 1) || (outBR_V2 != -1 && edgeStates[outBR_V2] == 1);
+                                bool tlHasLine = (outTL_H != -1 && edgeStates[outTL_H] == 1) || (outTL_V != -1 && edgeStates[outTL_V] == 1);
+                                bool brHasLine = (outBR_H2 != -1 && edgeStates[outBR_H2] == 1) || (outBR_V2 != -1 && edgeStates[outBR_V2] == 1);
 
-                            if (tlHasLine && brHasLine) {
-                                if (outTL_H != -1 && edgeStates[outTL_H] == 0) { if (!setEdgeState(outTL_H, -1)) AC3_RETURN_FALSE; }
-                                if (outTL_V != -1 && edgeStates[outTL_V] == 0) { if (!setEdgeState(outTL_V, -1)) AC3_RETURN_FALSE; }
-                                if (outBR_H2 != -1 && edgeStates[outBR_H2] == 0) { if (!setEdgeState(outBR_H2, -1)) AC3_RETURN_FALSE; }
-                                if (outBR_V2 != -1 && edgeStates[outBR_V2] == 0) { if (!setEdgeState(outBR_V2, -1)) AC3_RETURN_FALSE; }
+                                if (tlHasLine && brHasLine) {
+                                    if (outTL_V != -1 && edgeStates[outTL_V] == 1) {
+                                        if (outTL_H != -1) { if (!setEdgeState(outTL_H, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                    if (outTL_H != -1 && edgeStates[outTL_H] == 1) {
+                                        if (outTL_V != -1) { if (!setEdgeState(outTL_V, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                    if (outBR_V2 != -1 && edgeStates[outBR_V2] == 1) {
+                                        if (outBR_H2 != -1) { if (!setEdgeState(outBR_H2, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                    if (outBR_H2 != -1 && edgeStates[outBR_H2] == 1) {
+                                        if (outBR_V2 != -1) { if (!setEdgeState(outBR_V2, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                }
                             }
 
-                            // Diagonal pair 2: TR (r, c+1) & BL (r+1, c)
-                            int outTR_H = (c < cols - 1) ? getHEdgeIndex(r, c + 1) : -1;
-                            int outTR_V = (r > 0) ? getVEdgeIndex(r - 1, c + 1) : -1;
-                            int outBL_H = (c > 0) ? getHEdgeIndex(r + 1, c - 1) : -1;
-                            int outBL_V = (r < rows - 1) ? getVEdgeIndex(r + 1, c) : -1;
+                            // Diagonal pair 2: TR (r, c+1) & BL of the end of the diagonal chain
+                            if (getClue(r - 1, c + 1) != 2) {
+                                int end_r = r, end_c = c;
+                                while (getClue(end_r + 1, end_c - 1) == 2) { end_r++; end_c--; }
+                                
+                                int outTR_H = (c < cols - 1) ? getHEdgeIndex(r, c + 1) : -1;
+                                int outTR_V = (r > 0) ? getVEdgeIndex(r - 1, c + 1) : -1;
+                                int outBL_H = (end_c > 0) ? getHEdgeIndex(end_r + 1, end_c - 1) : -1;
+                                int outBL_V = (end_r < rows - 1) ? getVEdgeIndex(end_r + 1, end_c) : -1;
 
-                            bool trHasLine = (outTR_H != -1 && edgeStates[outTR_H] == 1) || (outTR_V != -1 && edgeStates[outTR_V] == 1);
-                            bool blHasLine = (outBL_H != -1 && edgeStates[outBL_H] == 1) || (outBL_V != -1 && edgeStates[outBL_V] == 1);
+                                bool trHasLine = (outTR_H != -1 && edgeStates[outTR_H] == 1) || (outTR_V != -1 && edgeStates[outTR_V] == 1);
+                                bool blHasLine = (outBL_H != -1 && edgeStates[outBL_H] == 1) || (outBL_V != -1 && edgeStates[outBL_V] == 1);
 
-                            if (trHasLine && blHasLine) {
-                                if (outTR_H != -1 && edgeStates[outTR_H] == 0) { if (!setEdgeState(outTR_H, -1)) AC3_RETURN_FALSE; }
-                                if (outTR_V != -1 && edgeStates[outTR_V] == 0) { if (!setEdgeState(outTR_V, -1)) AC3_RETURN_FALSE; }
-                                if (outBL_H != -1 && edgeStates[outBL_H] == 0) { if (!setEdgeState(outBL_H, -1)) AC3_RETURN_FALSE; }
-                                if (outBL_V != -1 && edgeStates[outBL_V] == 0) { if (!setEdgeState(outBL_V, -1)) AC3_RETURN_FALSE; }
+                                if (trHasLine && blHasLine) {
+                                    if (outTR_V != -1 && edgeStates[outTR_V] == 1) {
+                                        if (outTR_H != -1) { if (!setEdgeState(outTR_H, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                    if (outTR_H != -1 && edgeStates[outTR_H] == 1) {
+                                        if (outTR_V != -1) { if (!setEdgeState(outTR_V, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                    if (outBL_V != -1 && edgeStates[outBL_V] == 1) {
+                                        if (outBL_H != -1) { if (!setEdgeState(outBL_H, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                    if (outBL_H != -1 && edgeStates[outBL_H] == 1) {
+                                        if (outBL_V != -1) { if (!setEdgeState(outBL_V, -1)) AC3_RETURN_FALSE; }
+                                    }
+                                }
                             }
                         }
                     }
@@ -3869,6 +3894,10 @@ RECORD_AC3_TIME(115);
                 
                 for (int i = 0; i < dotEdgesCount; i++) {
                     int edgeIdx = dotEdges[i];
+                    if (edgeIdx < 0 || edgeIdx >= numEdges) {
+                        crosses++; // Out of bounds is essentially a cross
+                        continue;
+                    }
                     if (edgeStates[edgeIdx] == 1) lines++;
                     else if (edgeStates[edgeIdx] == -1) crosses++;
                     else {
@@ -4355,31 +4384,18 @@ RECORD_AC3_TIME(115);
                 if (IS_RULE_ENABLED(152)) {
                     RECORD_AC3_TIME(152); 
                     if (!runUniversalParityCheck()) AC3_RETURN_FALSE; 
+                    if (ac3_progress_flag) AC3_RETURN_TRUE;
                 }
             }
             
             if (ac3_current_difficulty_limit >=DIFF_EXTREME && !isDoingLookahead && !restrictLogicToLocal) {
-                int edges_before = 0;
-                for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_before++;
-                
                 if (IS_RULE_ENABLED(161)) {
                     RECORD_AC3_TIME(161);
                     if (!applyLUT()) AC3_RETURN_FALSE;
+                    if (ac3_progress_flag) AC3_RETURN_TRUE;
                     RECORD_AC3_TIME(161);
                     if (!applyBoundaryLUTs()) AC3_RETURN_FALSE;
-                }
-                
-                int edges_after = 0;
-                for(int i=0; i<numEdges; i++) if (edgeStates[i] != 0) edges_after++;
-                
-                if (edges_after > edges_before) {
-                    for(int r=0; r<rows; r++) {
-                        for(int c=0; c<cols; c++) cellStack[cellStackTop++] = r * cols + c;
-                    }
-                    for(int r=0; r<=rows; r++) {
-                        for(int c=0; c<=cols; c++) dotStack[dotStackTop++] = r * (cols + 1) + c;
-                    }
-                    continue;
+                    if (ac3_progress_flag) AC3_RETURN_TRUE;
                 }
             }
             
@@ -4799,7 +4815,7 @@ int check_human_solvability() {
         } else {
             // Lightweight difficulty escalation: try easy rules first, escalate only when stuck
             // Enforce "tokiaji": after a hard breakthrough (diff >= threshold), at least MIN_EASY_CASCADE easy steps are required
-            int hard_technique_threshold = (solver_max_difficulty >= DIFF_GLOBAL_4) ? DIFF_EXTREME : DIFF_GLOBAL_3;
+            int hard_technique_threshold = DIFF_GLOBAL_3; // All Lookaheads (Diff 7+) and GF2 (Diff 9) are considered hard techniques
             #define MIN_EASY_CASCADE 5                      // Minimum easy steps required after a hard breakthrough
             int hard_breakthrough_count = 0;
             int easy_cascade_count = 0;
